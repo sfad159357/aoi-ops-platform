@@ -1,0 +1,94 @@
+services:
+  db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: aoiops-db
+    environment:
+      # 為了讓開發環境一鍵啟動，這裡用 SA 密碼（MVP 開發用途）。
+      # 實務上應改用更安全的帳密與 secret 管理。
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=${MSSQL_SA_PASSWORD:-Your_password123!}
+    ports:
+      - "1433:1433"
+    volumes:
+      - aoiops_mssql_data:/var/opt/mssql
+    healthcheck:
+      test: /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -Q "SELECT 1" -C || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    image: mcr.microsoft.com/dotnet/sdk:8.0
+    container_name: aoiops-backend
+    working_dir: /src/backend/src/Api
+    volumes:
+      - ../../:/src
+    environment:
+      # 為了讓 container 對外提供 HTTP，避免 https redirection 在 dev 被卡住
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://0.0.0.0:8080
+      - ConnectionStrings__Default=Server=db,1433;Database=AOIOpsPlatform;User Id=sa;Password=${MSSQL_SA_PASSWORD:-Your_password123!};TrustServerCertificate=true;
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      bash -lc "dotnet restore &&
+      dotnet watch run --no-hot-reload"
+
+  frontend:
+    image: node:20-bullseye
+    container_name: aoiops-frontend
+    working_dir: /src/frontend
+    volumes:
+      - ../../:/src
+    environment:
+      # Vite 在 container 內需綁 0.0.0.0 才能被 host 存取
+      - VITE_API_BASE_URL=http://localhost:8080
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    command: >
+      bash -lc "npm install &&
+      npm run dev -- --host 0.0.0.0 --port 5173"
+
+  data-simulator:
+    image: python:3.12-slim
+    container_name: aoiops-data-simulator
+    working_dir: /src/services/data-simulator
+    volumes:
+      - ../../:/src
+    environment:
+      - DB_CONNECTION=Server=db,1433;Database=AOIOpsPlatform;User Id=sa;Password=${MSSQL_SA_PASSWORD:-Your_password123!};TrustServerCertificate=true;
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      bash -lc "pip install -r requirements.txt &&
+      python -m app"
+
+  ai-copilot:
+    image: python:3.12-slim
+    container_name: aoiops-ai-copilot
+    working_dir: /src/services/ai-copilot
+    volumes:
+      - ../../:/src
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - DB_CONNECTION=Server=db,1433;Database=AOIOpsPlatform;User Id=sa;Password=${MSSQL_SA_PASSWORD:-Your_password123!};TrustServerCertificate=true;
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    ports:
+      - "8000:8000"
+    command: >
+      bash -lc "pip install -r requirements.txt &&
+      uvicorn app.api:app --host 0.0.0.0 --port 8000"
+
+volumes:
+  aoiops_mssql_data:
+
