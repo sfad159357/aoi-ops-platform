@@ -1,20 +1,25 @@
 services:
   db:
-    image: mcr.microsoft.com/mssql/server:2022-latest
+    image: postgres:16-alpine
     container_name: aoiops-db
+    restart: unless-stopped
     environment:
-      # 為了讓開發環境一鍵啟動，這裡用 SA 密碼（MVP 開發用途）。
+      # 為了讓開發環境一鍵啟動，這裡用單一帳密（MVP 開發用途）。
       # 實務上應改用更安全的帳密與 secret 管理。
-      - ACCEPT_EULA=Y
-      - MSSQL_SA_PASSWORD=${MSSQL_SA_PASSWORD:-Your_password123!}
+      - POSTGRES_DB=AOIOpsPlatform
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
     ports:
-      - "1433:1433"
+      - "5432:5432"
     volumes:
-      - aoiops_mssql_data:/var/opt/mssql
+      - aoiops_postgres_data:/var/lib/postgresql/data
+      # 之所以掛載 init script：讓 DB container 第一次啟動時就能自動建立必要 extension / seed（MVP 用途）
+      # 注意：只有在資料卷是「全新」時才會執行（Postgres 官方 entrypoint 行為）
+      - ../db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -Q "SELECT 1" -C || exit 1
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
-      timeout: 5s
+      timeout: 10s
       retries: 20
 
   backend:
@@ -27,7 +32,7 @@ services:
       # 為了讓 container 對外提供 HTTP，避免 https redirection 在 dev 被卡住
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://0.0.0.0:8080
-      - ConnectionStrings__Default=Server=db,1433;Database=AOIOpsPlatform;User Id=sa;Password=${MSSQL_SA_PASSWORD:-Your_password123!};TrustServerCertificate=true;
+      - ConnectionStrings__Default=Host=db;Port=5432;Database=AOIOpsPlatform;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres};
     ports:
       - "8080:8080"
     depends_on:
@@ -61,7 +66,7 @@ services:
     volumes:
       - ../../:/src
     environment:
-      - DB_CONNECTION=Server=db,1433;Database=AOIOpsPlatform;User Id=sa;Password=${MSSQL_SA_PASSWORD:-Your_password123!};TrustServerCertificate=true;
+      - DB_CONNECTION=Host=db;Port=5432;Database=AOIOpsPlatform;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres};
     depends_on:
       db:
         condition: service_healthy
@@ -77,7 +82,7 @@ services:
       - ../../:/src
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - DB_CONNECTION=Server=db,1433;Database=AOIOpsPlatform;User Id=sa;Password=${MSSQL_SA_PASSWORD:-Your_password123!};TrustServerCertificate=true;
+      - DB_CONNECTION=Host=db;Port=5432;Database=AOIOpsPlatform;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres};
     depends_on:
       db:
         condition: service_healthy
@@ -90,5 +95,5 @@ services:
       uvicorn app.api:app --host 0.0.0.0 --port 8000"
 
 volumes:
-  aoiops_mssql_data:
+  aoiops_postgres_data:
 

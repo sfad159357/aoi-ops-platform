@@ -6,7 +6,7 @@
 ### High-level
 - **Frontend (`frontend/`)**：Dashboard / 查詢 / Defect Review / Copilot UI
 - **Core Backend (`backend/`)**：主要業務 API、權限與 workflow（MVP 先不做複雜 RBAC）
-- **Database (SQL Server)**：依 `ERD.md` 的 schema 存製造與缺陷資料
+- **Database (PostgreSQL)**：依 `ERD.md` 的 schema 存製造與缺陷資料
 - **Python Services (`services/`)**：資料模擬、影像輔助、文件 Copilot（OpenAI）
 
 ### 資料流（簡述）
