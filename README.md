@@ -1,9 +1,9 @@
 ## AOI Ops Platform（MVP）
 
 模擬高科技製造場景的生產資訊系統，
-涵蓋設備數據收集、製程監控、缺陷管理與工程知識助理。
+涵蓋設備數據收集、製程監控、缺陷管理與工程知識。
 
-### 一句話總結（給面試官）
+
 用 **.NET（分層架構）+ PostgreSQL + Python AI** 模擬 MES/AOI 場景，展示「企業後端設計 + 資料建模 + 可容器化落地」能力。
 
 ### 系統定位
@@ -13,7 +13,6 @@
 - React 前端即時呈現 dashboard、告警、缺陷清單
 - AI Copilot 根據 SOP 文件與異常 context 提供 troubleshooting 建議
 
-### 亮點（MVP 目前已落地）
 - **PostgreSQL 開發環境一鍵啟動**：`docker compose up` 直接起 DB，並支援 init script
 - **EF Core 資料模型已對齊 ERD**：`AoiOpsDbContext` 使用 Fluent API 管理 table/column/index
 - **可快速驗證 DB 連線**：`GET /api/health/db` 回傳 `canConnect` 與 `toolsTableExists`
@@ -30,7 +29,7 @@
 | AI 服務 | Python / FastAPI、OpenAI RAG |
 | 容器化 | Docker Compose |
 
-### 目標功能（MVP）
+
 - **Defect Review**：匯入缺陷資料/影像、標記 True/False、
   Review history、相似案例查詢
 - **Fab Monitoring**：tool/lot/wafer dashboard、
@@ -53,7 +52,7 @@ Python Simulator
 - `infra/`：Docker Compose、Mosquitto、InfluxDB、DB migrations
 - `docs/`：架構、ERD、API spec、MQTT 資料流
 
-### Quick Start（開發者）
+### Quick Start
 ```bash
 docker compose -f infra/docker/docker-compose.yml up
 ```
