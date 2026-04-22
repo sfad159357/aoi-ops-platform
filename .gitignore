@@ -19,3 +19,11 @@ obj/
 .env
 .env.*
 
+# for me
+schedule.md
+schedule-tracker.md
+
+# Cursor / IDE
+.cursor/
+
+
