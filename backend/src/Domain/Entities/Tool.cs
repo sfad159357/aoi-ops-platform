@@ -7,7 +7,10 @@ namespace AOIOpsPlatform.Domain.Entities;
 /// </summary>
 public sealed class Tool
 {
-    public long Id { get; set; }
+    // 為什麼用 Guid：
+    // - OT/IT 整合時，事件可能先在 Kafka/RabbitMQ 流動再落 DB；Guid 更容易在「分散式系統」裡提前產生並追蹤。
+    // - 也能避免不同資料來源合併時的自增主鍵撞號問題。
+    public Guid Id { get; set; }
 
     public string ToolCode { get; set; } = null!;
 

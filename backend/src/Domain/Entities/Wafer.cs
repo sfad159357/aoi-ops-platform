@@ -6,9 +6,9 @@ namespace AOIOpsPlatform.Domain.Entities;
 /// </summary>
 public sealed class Wafer
 {
-    public long Id { get; set; }
+    public Guid Id { get; set; }
 
-    public long LotId { get; set; }
+    public Guid LotId { get; set; }
 
     public string WaferNo { get; set; } = null!;
 

@@ -7,7 +7,7 @@ namespace AOIOpsPlatform.Domain.Entities;
 /// </summary>
 public sealed class Lot
 {
-    public long Id { get; set; }
+    public Guid Id { get; set; }
 
     public string LotNo { get; set; } = null!;
 

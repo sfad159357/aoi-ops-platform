@@ -26,16 +26,22 @@ public sealed class AoiOpsDbContext : DbContext
     public DbSet<Document> Documents => Set<Document>();
     public DbSet<DocumentChunk> DocumentChunks => Set<DocumentChunk>();
     public DbSet<CopilotQuery> CopilotQueries => Set<CopilotQuery>();
+    public DbSet<Workorder> Workorders => Set<Workorder>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         // 這裡用 Fluent API 明確指定 table/column 命名與關聯。
         // 原因：避免 EF 的預設命名在長期演進時造成 migration 難以追蹤。
+        //
+        // 共同約定（新手先記這句就好）：
+        // - 所有表都用 Guid 當主鍵，預設由 Postgres 的 gen_random_uuid() 產生。
+        // - 這樣做可以讓「事件流（Kafka/RabbitMQ）」在落 DB 前就先產生 id，追溯更容易。
 
         modelBuilder.Entity<Tool>(b =>
         {
             b.ToTable("tools");
             b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
             b.Property(x => x.ToolCode).HasColumnName("tool_code").HasMaxLength(100).IsRequired();
             b.Property(x => x.ToolName).HasColumnName("tool_name").HasMaxLength(200).IsRequired();
             b.Property(x => x.ToolType).HasColumnName("tool_type").HasMaxLength(100);
@@ -49,6 +55,7 @@ public sealed class AoiOpsDbContext : DbContext
         {
             b.ToTable("recipes");
             b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
             b.Property(x => x.RecipeCode).HasColumnName("recipe_code").HasMaxLength(100).IsRequired();
             b.Property(x => x.RecipeName).HasColumnName("recipe_name").HasMaxLength(200).IsRequired();
             b.Property(x => x.Version).HasColumnName("version").HasMaxLength(50);
@@ -61,6 +68,7 @@ public sealed class AoiOpsDbContext : DbContext
         {
             b.ToTable("lots");
             b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
             b.Property(x => x.LotNo).HasColumnName("lot_no").HasMaxLength(100).IsRequired();
             b.Property(x => x.ProductCode).HasColumnName("product_code").HasMaxLength(100);
             b.Property(x => x.Quantity).HasColumnName("quantity");
@@ -75,6 +83,7 @@ public sealed class AoiOpsDbContext : DbContext
         {
             b.ToTable("wafers");
             b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
             b.Property(x => x.LotId).HasColumnName("lot_id");
             b.Property(x => x.WaferNo).HasColumnName("wafer_no").HasMaxLength(50).IsRequired();
             b.Property(x => x.Status).HasColumnName("status").HasMaxLength(50);
@@ -86,6 +95,7 @@ public sealed class AoiOpsDbContext : DbContext
         {
             b.ToTable("process_runs");
             b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
             b.Property(x => x.ToolId).HasColumnName("tool_id");
             b.Property(x => x.RecipeId).HasColumnName("recipe_id");
             b.Property(x => x.LotId).HasColumnName("lot_id");
@@ -104,6 +114,7 @@ public sealed class AoiOpsDbContext : DbContext
         {
             b.ToTable("alarms");
             b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
             b.Property(x => x.ToolId).HasColumnName("tool_id");
             b.Property(x => x.ProcessRunId).HasColumnName("process_run_id");
             b.Property(x => x.AlarmCode).HasColumnName("alarm_code").HasMaxLength(100).IsRequired();
@@ -112,6 +123,7 @@ public sealed class AoiOpsDbContext : DbContext
             b.Property(x => x.TriggeredAt).HasColumnName("triggered_at");
             b.Property(x => x.ClearedAt).HasColumnName("cleared_at");
             b.Property(x => x.Status).HasColumnName("status").HasMaxLength(50);
+            b.Property(x => x.Source).HasColumnName("source").HasMaxLength(50);
             b.HasIndex(x => x.TriggeredAt);
         });
 
@@ -119,6 +131,7 @@ public sealed class AoiOpsDbContext : DbContext
         {
             b.ToTable("defects");
             b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
             b.Property(x => x.ToolId).HasColumnName("tool_id");
             b.Property(x => x.LotId).HasColumnName("lot_id");
             b.Property(x => x.WaferId).HasColumnName("wafer_id");
@@ -130,6 +143,7 @@ public sealed class AoiOpsDbContext : DbContext
             b.Property(x => x.YCoord).HasColumnName("y_coord").HasColumnType("decimal(18,4)");
             b.Property(x => x.DetectedAt).HasColumnName("detected_at");
             b.Property(x => x.IsFalseAlarm).HasColumnName("is_false_alarm");
+            b.Property(x => x.KafkaEventId).HasColumnName("kafka_event_id").HasMaxLength(200);
             b.HasIndex(x => x.DetectedAt);
         });
 
@@ -137,6 +151,7 @@ public sealed class AoiOpsDbContext : DbContext
         {
             b.ToTable("defect_images");
             b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
             b.Property(x => x.DefectId).HasColumnName("defect_id");
             b.Property(x => x.ImagePath).HasColumnName("image_path").HasMaxLength(2000).IsRequired();
             b.Property(x => x.ThumbnailPath).HasColumnName("thumbnail_path").HasMaxLength(2000);
@@ -150,6 +165,7 @@ public sealed class AoiOpsDbContext : DbContext
         {
             b.ToTable("defect_reviews");
             b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
             b.Property(x => x.DefectId).HasColumnName("defect_id");
             b.Property(x => x.Reviewer).HasColumnName("reviewer").HasMaxLength(200).IsRequired();
             b.Property(x => x.ReviewResult).HasColumnName("review_result").HasMaxLength(50).IsRequired();
@@ -162,6 +178,7 @@ public sealed class AoiOpsDbContext : DbContext
         {
             b.ToTable("documents");
             b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
             b.Property(x => x.Title).HasColumnName("title").HasMaxLength(500).IsRequired();
             b.Property(x => x.DocType).HasColumnName("doc_type").HasMaxLength(100);
             b.Property(x => x.Version).HasColumnName("version").HasMaxLength(50);
@@ -173,6 +190,7 @@ public sealed class AoiOpsDbContext : DbContext
         {
             b.ToTable("document_chunks");
             b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
             b.Property(x => x.DocumentId).HasColumnName("document_id");
             b.Property(x => x.ChunkText).HasColumnName("chunk_text").IsRequired();
             b.Property(x => x.ChunkIndex).HasColumnName("chunk_index");
@@ -185,6 +203,7 @@ public sealed class AoiOpsDbContext : DbContext
         {
             b.ToTable("copilot_queries");
             b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
             b.Property(x => x.QueryText).HasColumnName("query_text").IsRequired();
             b.Property(x => x.RelatedAlarmId).HasColumnName("related_alarm_id");
             b.Property(x => x.RelatedDefectId).HasColumnName("related_defect_id");
@@ -192,6 +211,20 @@ public sealed class AoiOpsDbContext : DbContext
             b.Property(x => x.SourceRefs).HasColumnName("source_refs");
             b.Property(x => x.CreatedAt).HasColumnName("created_at");
             b.HasIndex(x => x.CreatedAt);
+        });
+
+        modelBuilder.Entity<Workorder>(b =>
+        {
+            b.ToTable("workorders");
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
+            b.Property(x => x.LotId).HasColumnName("lot_id");
+            b.Property(x => x.WorkorderNo).HasColumnName("workorder_no").HasMaxLength(100).IsRequired();
+            b.Property(x => x.Priority).HasColumnName("priority").HasMaxLength(50);
+            b.Property(x => x.Status).HasColumnName("status").HasMaxLength(50);
+            b.Property(x => x.SourceQueue).HasColumnName("source_queue").HasMaxLength(50).IsRequired();
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.HasIndex(x => x.WorkorderNo).IsUnique();
         });
     }
 }

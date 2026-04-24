@@ -6,11 +6,11 @@ namespace AOIOpsPlatform.Domain.Entities;
 /// </summary>
 public sealed class Alarm
 {
-    public long Id { get; set; }
+    public Guid Id { get; set; }
 
-    public long ToolId { get; set; }
+    public Guid ToolId { get; set; }
 
-    public long ProcessRunId { get; set; }
+    public Guid? ProcessRunId { get; set; }
 
     public string AlarmCode { get; set; } = null!;
 
@@ -23,5 +23,12 @@ public sealed class Alarm
     public DateTimeOffset? ClearedAt { get; set; }
 
     public string? Status { get; set; }
+
+    /// <summary>
+    /// 告警來源（mqtt / kafka / manual）。
+    /// 為什麼要留這個欄位：當你後面加入 Kafka/RabbitMQ 後，告警可能來自不同通道；
+    /// 留來源可以幫你 debug「是哪條資料管線出問題」。
+    /// </summary>
+    public string? Source { get; set; }
 }
 

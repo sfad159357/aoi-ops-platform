@@ -6,13 +6,13 @@ namespace AOIOpsPlatform.Domain.Entities;
 /// </summary>
 public sealed class CopilotQuery
 {
-    public long Id { get; set; }
+    public Guid Id { get; set; }
 
     public string QueryText { get; set; } = null!;
 
-    public long? RelatedAlarmId { get; set; }
+    public Guid? RelatedAlarmId { get; set; }
 
-    public long? RelatedDefectId { get; set; }
+    public Guid? RelatedDefectId { get; set; }
 
     public string? AnswerText { get; set; }
 

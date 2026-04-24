@@ -7,9 +7,9 @@ namespace AOIOpsPlatform.Domain.Entities;
 /// </summary>
 public sealed class DocumentChunk
 {
-    public long Id { get; set; }
+    public Guid Id { get; set; }
 
-    public long DocumentId { get; set; }
+    public Guid DocumentId { get; set; }
 
     public string ChunkText { get; set; } = null!;
 

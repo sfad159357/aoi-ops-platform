@@ -6,15 +6,15 @@ namespace AOIOpsPlatform.Domain.Entities;
 /// </summary>
 public sealed class Defect
 {
-    public long Id { get; set; }
+    public Guid Id { get; set; }
 
-    public long ToolId { get; set; }
+    public Guid ToolId { get; set; }
 
-    public long LotId { get; set; }
+    public Guid LotId { get; set; }
 
-    public long WaferId { get; set; }
+    public Guid WaferId { get; set; }
 
-    public long ProcessRunId { get; set; }
+    public Guid? ProcessRunId { get; set; }
 
     public string DefectCode { get; set; } = null!;
 
@@ -29,5 +29,11 @@ public sealed class Defect
     public DateTimeOffset DetectedAt { get; set; }
 
     public bool IsFalseAlarm { get; set; }
+
+    /// <summary>
+    /// Kafka event id（對應 ERD 的 kafka_event_id）。
+    /// 為什麼要留：當你需要追查「這筆 defect 是哪一則 Kafka 訊息產生的」時，就靠它串回去。
+    /// </summary>
+    public string? KafkaEventId { get; set; }
 }
 

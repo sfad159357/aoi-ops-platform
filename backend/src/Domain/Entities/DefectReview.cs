@@ -6,9 +6,9 @@ namespace AOIOpsPlatform.Domain.Entities;
 /// </summary>
 public sealed class DefectReview
 {
-    public long Id { get; set; }
+    public Guid Id { get; set; }
 
-    public long DefectId { get; set; }
+    public Guid DefectId { get; set; }
 
     public string Reviewer { get; set; } = null!;
 

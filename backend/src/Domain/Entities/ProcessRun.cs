@@ -7,15 +7,15 @@ namespace AOIOpsPlatform.Domain.Entities;
 /// </summary>
 public sealed class ProcessRun
 {
-    public long Id { get; set; }
+    public Guid Id { get; set; }
 
-    public long ToolId { get; set; }
+    public Guid ToolId { get; set; }
 
-    public long RecipeId { get; set; }
+    public Guid RecipeId { get; set; }
 
-    public long LotId { get; set; }
+    public Guid LotId { get; set; }
 
-    public long WaferId { get; set; }
+    public Guid WaferId { get; set; }
 
     public DateTimeOffset RunStartAt { get; set; }
 

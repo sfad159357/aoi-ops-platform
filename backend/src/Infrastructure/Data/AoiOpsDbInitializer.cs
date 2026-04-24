@@ -39,5 +39,162 @@ public static class AoiOpsDbInitializer
         // 後續若導入 migrations，應移除此段並改為自動/手動執行 dotnet ef database update。
         var created = await db.Database.EnsureCreatedAsync(cancellationToken);
         logger.LogInformation("Database EnsureCreated completed. Created={Created}", created);
+
+        // Seed（開發用假資料）
+        // 為什麼要在開發環境 seed：
+        // - 新手最容易卡「表有了，但畫面不知道要顯示什麼」。
+        // - 先塞最小 demo 資料，才能立刻做 W02 的 list API 與前端顯示。
+        //
+        // 這裡的原則：只在資料表是空的時才 seed，避免你手動新增資料後被覆蓋。
+        var hasAnyTool = await db.Tools.AnyAsync(cancellationToken);
+        if (!hasAnyTool)
+        {
+            logger.LogInformation("Seeding development data (tools/lots/defects) ...");
+
+            var now = DateTimeOffset.UtcNow;
+
+            var toolA = new Domain.Entities.Tool
+            {
+                Id = Guid.NewGuid(),
+                ToolCode = "AOI-A",
+                ToolName = "AOI Machine A",
+                ToolType = "AOI",
+                Status = "online",
+                Location = "FAB-1",
+                CreatedAt = now
+            };
+
+            var toolB = new Domain.Entities.Tool
+            {
+                Id = Guid.NewGuid(),
+                ToolCode = "AOI-B",
+                ToolName = "AOI Machine B",
+                ToolType = "AOI",
+                Status = "online",
+                Location = "FAB-1",
+                CreatedAt = now
+            };
+
+            var recipe = new Domain.Entities.Recipe
+            {
+                Id = Guid.NewGuid(),
+                RecipeCode = "RCP-001",
+                RecipeName = "Baseline Recipe",
+                Version = "v1",
+                Description = "MVP demo recipe",
+                CreatedAt = now
+            };
+
+            db.Tools.AddRange(toolA, toolB);
+            db.Recipes.Add(recipe);
+
+            // 5 個 lot：讓 list API 有東西可看
+            var lots = Enumerable.Range(1, 5).Select(i => new Domain.Entities.Lot
+            {
+                Id = Guid.NewGuid(),
+                LotNo = $"LOT-{i:000}",
+                ProductCode = "PROD-A",
+                Quantity = 25,
+                StartTime = now.AddHours(-i * 2),
+                EndTime = null,
+                Status = "in_progress",
+                CreatedAt = now.AddHours(-i * 2)
+            }).ToList();
+
+            db.Lots.AddRange(lots);
+
+            // 每個 lot 建 2 片 wafer（用 string wafer_no，先求簡單）
+            var wafers = lots.SelectMany(l => new[]
+            {
+                new Domain.Entities.Wafer
+                {
+                    Id = Guid.NewGuid(),
+                    LotId = l.Id,
+                    WaferNo = "1",
+                    Status = "in_progress",
+                    CreatedAt = now
+                },
+                new Domain.Entities.Wafer
+                {
+                    Id = Guid.NewGuid(),
+                    LotId = l.Id,
+                    WaferNo = "2",
+                    Status = "in_progress",
+                    CreatedAt = now
+                }
+            }).ToList();
+
+            db.Wafers.AddRange(wafers);
+
+            // 建一筆 process_run + 一筆 defect：讓你後面做 defect list / trend 有基礎資料
+            var firstLot = lots.First();
+            var firstWafer = wafers.First(w => w.LotId == firstLot.Id);
+
+            var run = new Domain.Entities.ProcessRun
+            {
+                Id = Guid.NewGuid(),
+                ToolId = toolA.Id,
+                RecipeId = recipe.Id,
+                LotId = firstLot.Id,
+                WaferId = firstWafer.Id,
+                RunStartAt = now.AddMinutes(-30),
+                RunEndAt = now.AddMinutes(-10),
+                Temperature = 180.5m,
+                Pressure = 120.3m,
+                YieldRate = 0.972m,
+                ResultStatus = "pass",
+                CreatedAt = now.AddMinutes(-30)
+            };
+
+            var defect = new Domain.Entities.Defect
+            {
+                Id = Guid.NewGuid(),
+                ToolId = toolA.Id,
+                LotId = firstLot.Id,
+                WaferId = firstWafer.Id,
+                ProcessRunId = run.Id,
+                DefectCode = "DEF-0042",
+                DefectType = "scratch",
+                Severity = "high",
+                XCoord = 12.34m,
+                YCoord = 56.78m,
+                DetectedAt = now.AddMinutes(-20),
+                IsFalseAlarm = false,
+                KafkaEventId = "seed-event-0001"
+            };
+
+            var alarm = new Domain.Entities.Alarm
+            {
+                Id = Guid.NewGuid(),
+                ToolId = toolA.Id,
+                ProcessRunId = run.Id,
+                AlarmCode = "ALM-9001",
+                AlarmLevel = "warning",
+                Message = "Seed alarm for demo",
+                TriggeredAt = now.AddMinutes(-19),
+                ClearedAt = null,
+                Status = "active",
+                Source = "manual"
+            };
+
+            var workorder = new Domain.Entities.Workorder
+            {
+                Id = Guid.NewGuid(),
+                LotId = firstLot.Id,
+                WorkorderNo = "WO-0001",
+                Priority = "normal",
+                Status = "pending",
+                SourceQueue = "workorder",
+                CreatedAt = now
+            };
+
+            db.ProcessRuns.Add(run);
+            db.Defects.Add(defect);
+            db.Alarms.Add(alarm);
+            db.Workorders.Add(workorder);
+
+            await db.SaveChangesAsync(cancellationToken);
+            logger.LogInformation("Seed completed.");
+        }
     }
 }

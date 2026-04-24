@@ -7,7 +7,7 @@ namespace AOIOpsPlatform.Domain.Entities;
 /// </summary>
 public sealed class Recipe
 {
-    public long Id { get; set; }
+    public Guid Id { get; set; }
 
     public string RecipeCode { get; set; } = null!;
 

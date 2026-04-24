@@ -7,7 +7,7 @@ namespace AOIOpsPlatform.Domain.Entities;
 /// </summary>
 public sealed class Document
 {
-    public long Id { get; set; }
+    public Guid Id { get; set; }
 
     public string Title { get; set; } = null!;
 
