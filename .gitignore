@@ -22,6 +22,8 @@ obj/
 # for me
 schedule.md
 schedule-tracker.md
+log.md
+.gitignore
 
 # Cursor / IDE
 .cursor/

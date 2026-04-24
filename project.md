@@ -5,103 +5,160 @@
 生產資訊監控、工程知識助理平台。
 
 主體用 C# / ASP.NET Core，輔助模組用 Python。
-模擬真實 MES 場景：設備數據收集、製程監控、異常告警、
-缺陷追蹤、與 ERP 資料整合。
+模擬真實 MES 場景：設備數據收集（MQTT → Kafka）、製程監控、異常告警、
+缺陷追蹤、業務事件路由（RabbitMQ）、與 AI Copilot 知識助理。
+
+---
 
 ### 整體架構
-Frontend
-React
-TypeScript
-負責 dashboard、defect review、查詢頁、文件問答頁
 
-Core Backend
-C# / ASP.NET Core Web API
-負責主業務邏輯、帳號、查詢、review workflow、alarm workflow、API
-這是你主要拿來對標企業 C#/.NET 技術棧的核心
+#### OT 設備層（現場端）
+AOI Machine / PLC / SCADA
+- 透過 MQTT 協議發送檢測數據（topic: `aoi/inspection/#`）
+- 模擬端用 Python Data Simulator 取代真實設備
 
-Message Broker
-MQTT（Mosquitto）
-模擬設備端數據上傳至平台
-Data Simulator 透過 MQTT publish 製造數據
-Backend subscribe 後寫入 DB
+#### Edge Broker
+Mosquitto Broker（MQTT pub/sub，輕量邊緣代理）
+- 接收 OT 設備 MQTT 訊息
+- 為什麼保留 Mosquitto：OT 設備標準協議是 MQTT，Mosquitto 是最常見的輕量 Broker，方便未來接真機
 
-Database
-  PostgreSQL（結構化資料：lot、wafer、alarm、defect、review）
-  InfluxDB（時序資料：設備即時數據、yield trend）
+#### 事件串流層（Kafka，新增）
+Kafka Broker（KRaft mode，single node，Docker 容器化）
+- MQTT Bridge 將 Mosquitto 的訊息轉發給 Kafka Producer
+- Topics：
+  - `aoi.inspection.raw`：原始檢測結果（溫度、壓力、良率、缺陷）
+  - `aoi.defect.event`：高嚴重度缺陷事件（立即觸發告警）
+- 為什麼要 Kafka：Mosquitto 只是 1 對 1 或廣播，Kafka 讓多個「消費者」可以**各自獨立消費同一份資料流**，不互相影響（例如：InfluxDB Writer、RabbitMQ Publisher、DB Writer 三個消費者同時處理同一則訊息）
 
-存 lot、wafer、tool、recipe、alarm、defect、review、documents 等資料
-開發環境以 PostgreSQL 為主，方便跨平台與容器化一鍵啟動
+#### IT 應用層（Workers + RabbitMQ，新增）
+- **Consumer Group A — InfluxDB Writer（Python）**
+  - 從 `aoi.inspection.raw` 消費 → 寫 InfluxDB（時序資料）
+- **Consumer Group B — RabbitMQ Publisher（Python）**
+  - 判斷是否為異常事件 → publish 至 RabbitMQ exchange
+  - RabbitMQ Queue: `alert` → 觸發告警寫入 PostgreSQL
+  - RabbitMQ Queue: `workorder` → 觸發工單建立
+- **Consumer Group C — DB Writer（Python）**
+  - 從 `aoi.inspection.raw` 消費 → 寫 PostgreSQL（process_runs、defects）
+- **良率統計 Worker（Python / FastAPI）**
+  - 定期聚合 InfluxDB 良率資料，回寫 PostgreSQL 供 dashboard 查詢
 
-Python Services
-  Data Simulator：模擬 tool / lot / wafer / AOI defect /
-                  yield / alarm 資料，透過 MQTT 發送
-  Vision Helper：OpenCV 基本影像前處理、相似圖輔助
-  AI Copilot Service：文件切塊、檢索、RAG、摘要
-用 OpenCV 做基本影像前處理、相似圖輔助
-AI Copilot Service
-做文件切塊、檢索、RAG、摘要
+#### 儲存層
+- PostgreSQL（結構化業務資料：lot、wafer、tool、recipe、alarm、defect、review、workorder、documents）
+- InfluxDB（時序資料：設備即時數值、良率趨勢）
+- 為什麼兩個 DB：PostgreSQL 適合「跨表查詢、業務流程」；InfluxDB 適合「高頻寫入、時間範圍查詢」
 
-Infra
-Docker Compose
-一鍵拉起前端、後端、DB、 Mosquitto、InfluxDB、Python service
+#### Core Backend（C# / ASP.NET Core Web API）
+- 主業務邏輯、帳號、查詢、review workflow、alarm workflow
+- 整合讀取 PostgreSQL 與 InfluxDB
+- 提供 REST API 給前端
+- 這是主要拿來對標企業 C#/.NET 技術棧的核心
+
+#### Python Microservices（FastAPI）
+- Data Simulator：模擬 AOI 設備，透過 MQTT 發送假資料
+- Kafka Consumer Workers：InfluxDB Writer / RabbitMQ Publisher / DB Writer
+- Vision Helper：OpenCV 基本影像前處理、相似圖輔助
+- AI Copilot Service：文件切塊、檢索、RAG、摘要
+
+#### Frontend（React + TypeScript）
+- Dashboard、Defect Review、查詢頁、文件問答頁
+- 即時監控（未來可接 WebSocket push）
+- 主角不是前端，但展示你能做出可用的操作介面
+
+#### Infra
+Docker Compose 一鍵拉起：
+前端 / 後端 / PostgreSQL / InfluxDB / Mosquitto / Kafka / RabbitMQ / Python services
+
+---
 
 ### 功能模組
-Defect Review Module
-匯入 defect image 與 metadata
-defect list / detail
-true defect / false alarm 標記
-defect 分類
-相似案例查詢
-review history
-Fab Monitoring Module
-tool / lot / wafer / recipe dashboard
-yield trend
-defect trend
-alarm list
-異常查詢
-summary report
-Knowledge Copilot Module
-上傳 SOP、recipe 文件、異常手冊
-文件搜尋
-問答附來源
-根據 defect / alarm 給 troubleshooting 建議
-shift summary
-Data Simulation Module
-自動產生製造資料流
-模擬正常 / 異常 / 漂移 / 誤判情境
-定時寫入 DB
 
-### 建議資料表
-tools
-lots
-wafers
-recipes
-process_runs
-alarms
-defects
-defect_images
-defect_reviews
-documents
-document_chunks
-copilot_queries
+#### Defect Review Module
+- 匯入 defect image 與 metadata
+- defect list / detail
+- true defect / false alarm 標記
+- defect 分類
+- 相似案例查詢
+- review history
 
-### 資料流
-Python simulator 產生製造與 AOI 假資料
-C# backend 接收並寫入 DB
-React 前端讀取 API 顯示 dashboard 與 review 頁
-使用者上傳文件後，Python AI service 建索引
-Copilot 根據文件與 defect/alarm context 回答問題
+#### Fab Monitoring Module
+- tool / lot / wafer / recipe dashboard
+- yield trend（InfluxDB 時序）
+- defect trend
+- alarm list（PostgreSQL + RabbitMQ alert queue 觸發）
+- 異常查詢
+- summary report
+
+#### Knowledge Copilot Module
+- 上傳 SOP、recipe 文件、異常手冊
+- 文件搜尋
+- 問答附來源
+- 根據 defect / alarm 給 troubleshooting 建議
+- shift summary
+
+#### Data Simulation Module
+- Python simulator 透過 MQTT 發送假資料（模擬 AOI Machine）
+- 正常 / 異常 / 漂移 / 誤判情境
+- 定時模擬機台心跳，寫入 Kafka → 各消費者
+
+---
+
+### 資料表（PostgreSQL）
+tools / lots / wafers / recipes / process_runs /
+alarms / defects / defect_images / defect_reviews /
+workorders（新增，來自 RabbitMQ workorder queue）/
+documents / document_chunks / copilot_queries
+
+---
+
+### 資料流（更新版）
+```
+Python Data Simulator
+  → MQTT publish（topic: aoi/inspection/#）
+  → Mosquitto Broker
+  → MQTT Bridge → Kafka Producer
+  → Kafka（topic: aoi.inspection.raw / aoi.defect.event）
+  → Consumer Group A → InfluxDB（時序）
+  → Consumer Group B → RabbitMQ → alert queue → PostgreSQL alarms
+                               → workorder queue → PostgreSQL workorders
+  → Consumer Group C → PostgreSQL process_runs / defects
+
+ASP.NET Core API 讀取 PostgreSQL + InfluxDB
+→ React 前端顯示 dashboard / review / 趨勢
+
+使用者上傳文件
+→ AI Copilot（Python FastAPI）建索引
+→ Copilot 根據文件與 defect/alarm context 回答問題
+```
+
+---
+
 ### 目錄切分建議
+```
 frontend/
 backend/
-services/data-simulator/
-services/vision-helper/
-services/ai-copilot/
+services/
+  data-simulator/       ← MQTT publisher
+  kafka-consumers/
+    influx-writer/      ← Consumer Group A
+    rabbitmq-publisher/ ← Consumer Group B
+    db-writer/          ← Consumer Group C
+  vision-helper/
+  ai-copilot/
 infra/
 docs/
+```
+
+---
 
 ### 技術分工
-C#：平台主體、企業系統感、履歷主訊號
-Python：AI、影像、模擬、自動化
-React：展示你原本前端能力，但主角不是前端本身
-
+| 技術 | 角色 |
+|------|------|
+| C# / ASP.NET Core | 平台主體、企業系統感、履歷主訊號 |
+| Kafka（KRaft） | 事件串流骨幹、OT→IT 橋接 |
+| RabbitMQ（AMQP） | 業務事件分級路由（告警 / 工單） |
+| Mosquitto（MQTT） | OT 邊緣代理、貼近真實設備協議 |
+| Python（FastAPI） | AI、影像、消費者 Worker、模擬器 |
+| InfluxDB | 時序儲存、機台心跳、良率趨勢 |
+| PostgreSQL | 業務關聯資料、主要查詢來源 |
+| React TypeScript | 展示前端整合能力 |
+| Docker Compose | 全服務容器化，一鍵啟動 |
