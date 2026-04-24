@@ -40,7 +40,10 @@ services:
         condition: service_healthy
     command: >
       bash -lc "dotnet restore &&
-      dotnet watch run --no-hot-reload"
+      dotnet watch run --no-hot-reload --no-launch-profile"
+      # --no-launch-profile 讓 dotnet 忽略 launchSettings.json（裡面寫死 localhost:5124）
+      # 改從環境變數 ASPNETCORE_URLS=http://0.0.0.0:8080 決定綁定位址
+      # 不加這個 flag，compose 的 ASPNETCORE_URLS 會被 launchSettings 的 applicationUrl 整個蓋掉
 
   frontend:
     image: node:20-bullseye

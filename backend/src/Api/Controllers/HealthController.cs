@@ -32,15 +32,17 @@ public sealed class HealthController : ControllerBase
     {
         var canConnect = await _db.Database.CanConnectAsync(cancellationToken);
 
-        // EF Core 8 的 SqlQuery<T> 在「非 scalar 投影」時對欄位命名較敏感；
-        // 這裡直接查 bool scalar，並把輸出欄位命名為 Value（對齊官方文件對 scalar composition 的慣例）。
+        // EF Core 8 的 SqlQuery<T> 會把你的 SQL 包成子查詢（FROM (your_sql) AS t）。
+        // 如果 SQL 結尾有分號「;」，PostgreSQL 的語法解析會爆 42601 syntax error。
+        // 解決方法：移除結尾分號，讓 EF Core 自行決定 SQL 邊界。
+        // 欄位命名為 "Value" 是因為 SqlQuery<bool> scalar projection 需要對應欄位名稱。
         FormattableString sql = $"""
                                  select exists (
                                    select 1
                                    from information_schema.tables
                                    where table_schema = 'public'
                                      and table_name = {"tools"}
-                                 ) as "Value";
+                                 ) as "Value"
                                  """;
 
         var toolsTableExists = await _db.Database
