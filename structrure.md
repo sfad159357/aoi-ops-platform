@@ -1,10 +1,16 @@
 aoi-ops-platform/
   frontend/
     src/
-      components/       ← UI 元件（Dashboard、DefectList、ReviewPanel…）
-      pages/            ← 頁面（/dashboard、/defects、/copilot…）
+      components/
+        spc/            ← SPC 元件（新增）
+          ControlChart.tsx         ← 通用管制圖（UCL/CL/LCL + 違規高亮）
+          ProcessCapabilityCard.tsx ← Ca/Cp/Cpk 指數卡片
+          RulesViolationTable.tsx  ← 八大規則違規清單
+      pages/
+        SpcDashboard.tsx  ← SPC 主頁面（新增，含 Xbar-R/I-MR/P/C 四個頁籤）
       hooks/            ← 自訂 React hooks（useLotsApi、useDefectsApi…）
-      api/              ← fetch wrapper（base url 從 VITE_API_BASE_URL 讀）
+      api/
+        spc.ts          ← SPC API 客戶端 + DEMO_* 常數（新增）
     public/
     package.json
     vite.config.ts
@@ -48,17 +54,13 @@ aoi-ops-platform/
         requirements.txt
         Dockerfile
 
-    vision-helper/
+    spc-service/              ← 新增：SPC 統計製程管制計算服務（port 8001）
       app/
-      requirements.txt
-      Dockerfile
-
-    ai-copilot/
-      app/
-        api.py                ← FastAPI 進入點（uvicorn 啟動）
-        chunker.py            ← 文件切塊
-        retriever.py          ← 向量檢索
-        generator.py          ← RAG 回答生成
+        main.py               ← FastAPI 進入點（CORS + 所有 /api/spc/* 路由）
+        models.py             ← Pydantic 輸入/輸出模型（對齊前端型別）
+        spc_engine.py         ← 計算引擎（Xbar-R/I-MR/P/Np/C/U + Ca/Cp/Cpk）
+        rules.py              ← 八大規則偵測（Western Electric Rules）
+        demo_data.py          ← Demo 資料產生器（固定 seed，可重現）
       requirements.txt
       Dockerfile
 

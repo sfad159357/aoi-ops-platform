@@ -17,6 +17,8 @@
 
 - **架構總覽（MVP）**：`architecture.md`  
   - 模組切分與責任邊界（對齊 `project.md` / `graph.md`）
+- **SPC 技術與原理（統計 + 落地）**：`spc.md`  
+  - 管制圖（Xbar-R/I-MR/P/C/U）、八大規則、Ca/Cp/Cpk，以及本專案資料流設計
 - **API 規格（草案）**：`api-spec.md`
 - **功能範圍**：`product-scope.md`
 

@@ -1,9 +1,9 @@
 ## AOI Ops Platform（MVP）
 
 模擬高科技製造場景的生產資訊系統，
-涵蓋設備數據收集（MQTT→Kafka）、製程監控、缺陷管理、業務事件路由（RabbitMQ）與工程知識。
+涵蓋設備數據收集（MQTT→Kafka）、製程監控、缺陷管理、業務事件路由（RabbitMQ），並以 **SPC（統計製程管制）** 製作製程監控圖表與異常趨勢偵測。
 
-用 **.NET（分層架構）+ Kafka + RabbitMQ + PostgreSQL + InfluxDB + Python AI** 模擬 OT/IT 融合的 MES/AOI 場景，展示「企業後端設計 + 事件驅動架構 + 資料建模 + 可容器化落地」能力。
+用 **.NET（分層架構）+ Kafka + RabbitMQ + PostgreSQL + InfluxDB + Python（SPC Service）** 模擬 OT/IT 融合的 MES/AOI 場景，展示「企業後端設計 + 事件驅動架構 + 資料建模 + 可容器化落地」能力。
 
 ---
 
@@ -26,7 +26,7 @@
    └─── Consumer Group C ──▶ 🗄️ PostgreSQL（business：lot/wafer/defect）
                   ▲
    ⚙️ ASP.NET Core API（REST / WebSocket）
-   🔌 FastAPI（分析 / ML / Copilot）
+   🔌 FastAPI（SPC 計算服務）
                   ▼
    🖥️ React TypeScript（即時監控儀表板）
 ```
@@ -62,7 +62,7 @@
 | 結構化資料庫      | PostgreSQL                | 業務資料、工單、異常記錄                |
 | 時序資料庫       | InfluxDB                  | 機台心跳、良率趨勢                   |
 | 視覺化         | Grafana                   | InfluxDB 時序儀表板（規劃）          |
-| Python 服務   | FastAPI、kafka-python      | 消費者 Workers、AI Copilot      |
+| Python 服務   | FastAPI、psycopg、numpy     | SPC 計算服務、消費者 Workers         |
 | 容器化         | Docker Compose            | 全服務一鍵啟動                     |
 
 
@@ -72,7 +72,7 @@
 
 - **Defect Review**：匯入缺陷資料/影像、標記 True/False、Review history、相似案例查詢
 - **Fab Monitoring**：tool/lot/wafer dashboard、yield/alarm/defect trend、異常查詢
-- **Knowledge Copilot**：文件上傳、檢索問答、回覆附來源
+- **SPC 統計製程管制（新增）**：Xbar-R/I-MR/P/C 管制圖、八大規則偵測、Ca/Cp/Cpk 製程能力
 - **事件驅動告警**：Kafka → RabbitMQ alert queue → 自動寫入告警記錄
 
 ---
@@ -97,10 +97,11 @@ Python Simulator
 
 - `frontend/`：React + TypeScript（Vite）
 - `backend/`：ASP.NET Core Web API（Api / Application / Domain / Infrastructure）
-- `services/`：Python（data-simulator / kafka-consumers / vision-helper / ai-copilot）
+- `services/`：Python（data-simulator / kafka-consumers / spc-service）
   - `kafka-consumers/influx-writer/`：Consumer Group A
   - `kafka-consumers/rabbitmq-publisher/`：Consumer Group B
   - `kafka-consumers/db-writer/`：Consumer Group C
+  - `spc-service/`：SPC 計算服務（FastAPI，port 8001）
 - `infra/`：Docker Compose、Mosquitto、Kafka、RabbitMQ、InfluxDB、DB migrations
 - `docs/`：架構、ERD、API spec、MQTT 資料流、Kafka 事件格式
 
@@ -113,8 +114,9 @@ docker compose -f infra/docker/docker-compose.yml up
 ```
 
 - **DB 健康檢查**：啟動後打 `GET /api/health/db`
-- **前端**：`http://localhost:5173`
+- **前端**：`http://localhost:5173`（含 SPC Dashboard）
 - **後端 API**：`http://localhost:8080`
+- **SPC Service**：`http://localhost:8001`（FastAPI Docs：`/docs`）
 - **Kafka**：`localhost:9092`（開發用）
 - **RabbitMQ 管理介面**：`http://localhost:15672`（預設帳密 guest/guest）
 - **InfluxDB UI**：`http://localhost:8086`

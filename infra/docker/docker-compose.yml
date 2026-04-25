@@ -54,6 +54,8 @@ services:
     environment:
       # Vite 在 container 內需綁 0.0.0.0 才能被 host 存取
       - VITE_API_BASE_URL=http://localhost:8080
+      # SPC Service（Python FastAPI，port 8001）
+      - VITE_SPC_API_URL=http://localhost:8001
     ports:
       - "5173:5173"
     depends_on:
@@ -77,25 +79,28 @@ services:
       bash -lc "pip install -r requirements.txt &&
       python -m app"
 
-  ai-copilot:
+  spc-service:
+    # SPC Service（統計製程管制計算服務）
+    # 為什麼獨立成 Python 微服務：
+    # - NumPy 的矩陣運算比在 C# 裡手刻更簡潔；計算密集邏輯適合 Python。
+    # - Port 8001 避免與 C# 後端（8080）衝突。
     image: python:3.12-slim
-    container_name: aoiops-ai-copilot
-    working_dir: /src/services/ai-copilot
+    container_name: aoiops-spc-service
+    working_dir: /src/services/spc-service
     volumes:
       - ../../:/src
     environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - PYTHONUNBUFFERED=1
+      # 讓 SPC Service 能直接從 PostgreSQL 取真實製程資料（Live 模式）
       - DB_CONNECTION=Host=db;Port=5432;Database=AOIOpsPlatform;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres};
     depends_on:
       db:
         condition: service_healthy
-      backend:
-        condition: service_started
     ports:
-      - "8000:8000"
+      - "8001:8001"
     command: >
       bash -lc "pip install -r requirements.txt &&
-      uvicorn app.api:app --host 0.0.0.0 --port 8000"
+      uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload"
 
   kafka:
     # 使用官方 Apache Kafka image，避免第三方 tag 不存在造成新手卡住 pull 失敗

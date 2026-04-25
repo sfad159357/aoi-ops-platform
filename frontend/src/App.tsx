@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import './App.css'
+import SpcDashboard from './pages/SpcDashboard'
 
 type DbHealthResponse = {
   canConnect: boolean
@@ -65,17 +66,21 @@ type DefectDetail = {
   reviews: unknown[]
 }
 
+// 頁面類型（使用簡單 state 切換，不引入 router 以保持最小依賴）
+type PageId = 'health' | 'spc'
+
 /**
- * App（前端最小驗收頁）
+ * App（前端導覽外殼）
  *
- * 為什麼要寫這個頁面：
- * - 新手最常卡在「前端跑了，但不知道後端有沒有通、DB 有沒有通」。
- * - 這個頁面只做一件事：呼叫後端 Health API，把結果直接顯示出來，讓你一眼判斷哪裡出問題。
+ * 為什麼用 state 切換頁面而不用 react-router：
+ * - MVP 階段頁面少，不需要 URL 路由的複雜度。
+ * - 未來要加 router，只需把這段 state 切換改成 <Routes>，改動量極小。
  *
  * 解決什麼問題：
- * - 避免你還沒做任何業務功能，就被環境、連線、CORS、base url 之類的問題卡住。
+ * - 讓 SPC Dashboard 和原有的 Health/API 驗收頁面共存，不需要重寫現有程式碼。
  */
 function App() {
+  const [page, setPage] = useState<PageId>('health')
   const apiBaseUrl = useMemo(() => {
     // 為什麼從 env 讀：
     // - 本機開發、Docker container、未來部署的後端網址可能不同，用環境變數切換最安全也最不容易搞混。
@@ -250,6 +255,53 @@ function App() {
 
   return (
     <>
+      {/* 頂部導覽列 */}
+      <nav style={{
+        background: '#111827',
+        borderBottom: '1px solid #374151',
+        padding: '0 24px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 24,
+        height: 48,
+        position: 'sticky',
+        top: 0,
+        zIndex: 100,
+      }}>
+        <span style={{ color: '#60a5fa', fontWeight: 700, fontSize: 14 }}>AOI Ops Platform</span>
+        {([
+          { id: 'health', label: '系統狀態 / API 驗收' },
+          { id: 'spc',    label: '📊 SPC 統計製程管制' },
+        ] as { id: PageId; label: string }[]).map((nav) => (
+          <button
+            key={nav.id}
+            onClick={() => setPage(nav.id)}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              borderBottom: page === nav.id ? '2px solid #3b82f6' : '2px solid transparent',
+              color: page === nav.id ? '#60a5fa' : '#9ca3af',
+              fontSize: 13,
+              fontWeight: page === nav.id ? 600 : 400,
+              cursor: 'pointer',
+              padding: '0 4px',
+              height: '100%',
+            }}
+          >
+            {nav.label}
+          </button>
+        ))}
+      </nav>
+
+      {/* SPC Dashboard 頁面 */}
+      {page === 'spc' && (
+        <div style={{ background: '#0d1117', minHeight: 'calc(100vh - 48px)' }}>
+          <SpcDashboard />
+        </div>
+      )}
+
+      {/* 原有系統狀態 / API 驗收頁（只在選到 health 時顯示） */}
+      {page === 'health' && (
       <section id="center">
         <div>
           <h1>AOI Ops Platform — 前端最小驗收</h1>
@@ -377,6 +429,7 @@ function App() {
           </div>
         </div>
       </section>
+      )}
     </>
   )
 }

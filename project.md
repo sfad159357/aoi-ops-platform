@@ -2,11 +2,11 @@
 
 ## 定位
 模擬高科技製造場景（PCB / 半導體）的 AOI 缺陷管理、
-生產資訊監控、工程知識助理平台。
+生產資訊監控，並以 **SPC（統計製程管制）** 做製程穩定性與異常趨勢偵測。
 
 主體用 C# / ASP.NET Core，輔助模組用 Python。
 模擬真實 MES 場景：設備數據收集（MQTT → Kafka）、製程監控、異常告警、
-缺陷追蹤、業務事件路由（RabbitMQ）、與 AI Copilot 知識助理。
+缺陷追蹤、業務事件路由（RabbitMQ）、以及 SPC 圖表與規則告警（八大規則 + Ca/Cp/Cpk）。
 
 ---
 
@@ -56,11 +56,15 @@ Kafka Broker（KRaft mode，single node，Docker 容器化）
 #### Python Microservices（FastAPI）
 - Data Simulator：模擬 AOI 設備，透過 MQTT 發送假資料
 - Kafka Consumer Workers：InfluxDB Writer / RabbitMQ Publisher / DB Writer
-- Vision Helper：OpenCV 基本影像前處理、相似圖輔助
-- AI Copilot Service：文件切塊、檢索、RAG、摘要
+- **SPC Service（新增）**：統計製程管制計算服務
+  - 計量型圖表：Xbar-R、I-MR、Xbar-S
+  - 計數型圖表：P、Np、C、U
+  - 八大規則偵測（Western Electric Rules）
+  - 製程能力指數：Ca、Cp、Cpk
+  - REST API + Demo 端點（前端展示用）
 
 #### Frontend（React + TypeScript）
-- Dashboard、Defect Review、查詢頁、文件問答頁
+- Dashboard、Defect Review、查詢頁、**SPC 管制圖頁（重點）**
 - 即時監控（未來可接 WebSocket push）
 - 主角不是前端，但展示你能做出可用的操作介面
 
@@ -88,12 +92,19 @@ Docker Compose 一鍵拉起：
 - 異常查詢
 - summary report
 
+#### SPC 統計製程管制模組（新增）
+- 計量型管制圖：Xbar-R、I-MR、Xbar-S、I-MR
+- 計數型管制圖：P、Np、C、U
+- 八大規則偵測（嚴重程度分級：red/yellow/green）
+- 製程能力指數：Ca（準確度）、Cp（精密度）、Cpk（綜合）
+- 製程等級判定：A+/A/B/C/D
+- React Dashboard：管制圖視覺化、違規高亮、製程能力卡片
+
 #### Knowledge Copilot Module
-- 上傳 SOP、recipe 文件、異常手冊
-- 文件搜尋
-- 問答附來源
-- 根據 defect / alarm 給 troubleshooting 建議
-- shift summary
+> 目前不是專案主線（降級為選配）。  
+> 現階段前端重點是「監控設備回傳數據 → 製作 SPC 圖表」。
+>
+> 後續若要補強，可再加入：文件上傳、檢索問答、回覆附來源等功能。
 
 #### Data Simulation Module
 - Python simulator 透過 MQTT 發送假資料（模擬 AOI Machine）
@@ -106,7 +117,7 @@ Docker Compose 一鍵拉起：
 tools / lots / wafers / recipes / process_runs /
 alarms / defects / defect_images / defect_reviews /
 workorders（新增，來自 RabbitMQ workorder queue）/
-documents / document_chunks / copilot_queries
+documents / document_chunks / copilot_queries（選配，非主線）
 
 ---
 
@@ -125,9 +136,9 @@ Python Data Simulator
 ASP.NET Core API 讀取 PostgreSQL + InfluxDB
 → React 前端顯示 dashboard / review / 趨勢
 
-使用者上傳文件
-→ AI Copilot（Python FastAPI）建索引
-→ Copilot 根據文件與 defect/alarm context 回答問題
+SPC Service（Python FastAPI）讀取 PostgreSQL（process_runs / tool_measurements）
+→ 計算管制圖（Xbar-R / I-MR / P / C ...）、八大規則、Ca/Cp/Cpk
+→ React 前端顯示 SPC Dashboard（違規高亮 + 處理優先級）
 ```
 
 ---
@@ -142,8 +153,13 @@ services/
     influx-writer/      ← Consumer Group A
     rabbitmq-publisher/ ← Consumer Group B
     db-writer/          ← Consumer Group C
-  vision-helper/
-  ai-copilot/
+  spc-service/          ← SPC 統計製程管制（新增，port 8001）
+    app/
+      main.py           ← FastAPI 進入點
+      models.py         ← Pydantic 模型
+      spc_engine.py     ← Xbar-R/I-MR/P/Np/C/U 計算引擎
+      rules.py          ← 八大規則偵測邏輯
+      demo_data.py      ← Demo 資料產生器
 infra/
 docs/
 ```
