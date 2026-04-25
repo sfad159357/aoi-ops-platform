@@ -89,6 +89,49 @@ DOCKER_HOST=unix:///var/run/docker.sock docker ps
 
 ---
 
+## 2026-04-25｜SPC Live 卡住：ingestion 沒有持續寫入 `process_runs`
+
+### 1) 症狀：SPC Live 回 422（資料不足），DB `process_runs` 筆數不增加
+
+- **症狀**
+  - `GET /api/spc/live/imr` 回：`資料不足（至少需要 10 點才能計算 I-MR）`
+  - DB 查詢 `select count(*) from process_runs;` 長期停在 1（或很低）
+- **代表什麼**
+  - Kafka→DB 的落地鏈路沒有真的在跑（producer/consumer 任一段出問題都會造成 DB 沒新增）
+
+### 2) 關鍵根因：Kafka 單 broker 未調整 offsets/transaction replication factor
+
+- **症狀特徵**
+  - consumer group `poll` 永遠是 0
+  - consumer `assignment` 永遠是空集合（代表分配不到 partition）
+- **為什麼會發生（根因）**
+  - 單 broker 開發環境若沒把 `__consumer_offsets` 相關 replication factor 調成 1，consumer group 協調可能失敗
+- **怎麼解（解法）**
+  - 在 `infra/docker/docker-compose.yml` 的 Kafka 增加：
+    - `KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1`
+    - `KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1`
+    - `KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1`
+    - `KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0`
+
+### 3) 加強可靠性：ingestion 增加自動重試/重連
+
+- **為什麼要做**
+  - docker compose 啟動時「容器 started」不等於 Kafka ready，第一次連不上就 crash 會讓你誤以為服務還活著
+- **怎麼解**
+  - `services/ingestion/app/__main__.py` 加入 backoff 重試，並在 logs 打 `sent/inserted` 低頻計數方便驗證
+
+### 4) 另一個常見坑：compose 專案名稱不同造成 port 衝突
+
+- **症狀**
+  - `Bind for 0.0.0.0:5173/5672/8080/8001 failed: port is already allocated`
+- **怎麼避免**
+  - 固定使用 `docker compose -p aoiops ...`
+  - 若其他專案佔用 port，停掉非 `aoiops-*` 的容器
+
+> 更完整的時間線與命令範本請看：`troubleshooting-ingestion-process-runs.md`
+
+---
+
 ## 常用驗收指令（下次照抄）
 
 ```bash

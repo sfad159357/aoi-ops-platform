@@ -109,6 +109,39 @@ docker compose -p aoiops -f infra/docker/docker-compose.yml up -d
 - **RabbitMQ 管理介面**：`http://localhost:15672`（預設帳密 guest/guest）
 - **InfluxDB UI**：`http://localhost:8086`
 
+> **常見啟動衝突（很重要）**  
+> - 如果你本機已經有跑 `npm run dev`（佔用 `5173`），請不要用 Docker 再起 `frontend`，否則會看到 `Bind for 0.0.0.0:5173 failed: port is already allocated`。  
+> - 如果你已經有另一套 RabbitMQ（佔用 `5672`），再起第二套會看到 `Bind for 0.0.0.0:5672 failed: port is already allocated`。  
+> - 建議一律用 `-p aoiops`，避免不同 compose 專案名稱互相佔 port。
+
+> **為什麼有時候你會看到 backend/spc-service 沒起來？**  
+> 這次遇到的狀況是：同一台機器上先前有其他 compose 專案（例如 `docker-*`）佔住 `8080/8001/5173/5672`，導致部分服務在「第一次 up」時沒有成功建立/綁定；後續再跑 `up -d backend spc-service` 時，compose 可能會判定容器已存在但狀態不完整，所以用 `--force-recreate` 重新建立一次最穩。
+
+---
+
+### 啟動指令整合（推薦照抄）
+
+#### A) 全部都用 Docker（前端 + 後端 + SPC + ingestion 全包）
+
+```bash
+cd /Users/apple/Documents/aoi-ops-platform
+docker compose -p aoiops -f infra/docker/docker-compose.yml up -d
+```
+
+#### B) 本機跑前端（`npm run dev`），其他用 Docker（避免 5173 衝突）
+
+```bash
+cd /Users/apple/Documents/aoi-ops-platform
+docker compose -p aoiops -f infra/docker/docker-compose.yml up -d \
+  db backend kafka rabbitmq influxdb spc-service ingestion
+```
+
+#### C) 如果 backend / spc-service 沒綁到 port（最穩補救）
+
+```bash
+docker compose -p aoiops -f infra/docker/docker-compose.yml up -d --force-recreate backend spc-service
+```
+
 ---
 
 ### 開發者操作手冊（啟動 / 驗收 / 測試）
@@ -120,9 +153,13 @@ docker compose -p aoiops -f infra/docker/docker-compose.yml up -d
 > 如果你在某些環境遇到 `Cannot connect to the Docker daemon`，請改用 `DOCKER_HOST=unix:///var/run/docker.sock`（原因見 `docs/debug-notes.md`）。
 
 ```bash
-# 只起 W02 基礎：DB + API + 前端 + Kafka/RabbitMQ/InfluxDB
+# 只起 W02 基礎：DB + API + 前端 + Kafka/RabbitMQ/InfluxDB（全用 Docker）
 DOCKER_HOST=unix:///var/run/docker.sock docker compose -f infra/docker/docker-compose.yml up -d \
   db backend frontend kafka rabbitmq influxdb
+
+# 如果你本機已有 `npm run dev`（推薦）：Docker 不再啟動 frontend（避免 5173 衝突）
+DOCKER_HOST=unix:///var/run/docker.sock docker compose -f infra/docker/docker-compose.yml up -d \
+  db backend kafka rabbitmq influxdb
 ```
 
 #### 2) 驗收（Smoke Test，照抄即可）

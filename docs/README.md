@@ -10,6 +10,8 @@
   - 你要做什麼、為什麼這樣做、怎麼啟動、怎麼驗收（照抄指令就能跑）
 - **開發除錯筆記**：`debug-notes.md`  
   - 記錄那些「會卡死」的大問題（避免重踩、面試可講）
+- **Troubleshooting：ingestion 沒有把資料寫進 process_runs（SPC Live 卡住）**：`troubleshooting-ingestion-process-runs.md`  
+  - Kafka 單 broker offsets replication factor、consumer group assignment、以及 docker port 衝突完整排查流程
 
 ---
 
