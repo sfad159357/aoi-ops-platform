@@ -1,7 +1,6 @@
 services:
   db:
     image: postgres:16-alpine
-    container_name: aoiops-db
     restart: unless-stopped
     environment:
       # 為了讓開發環境一鍵啟動，這裡用單一帳密（MVP 開發用途）。
@@ -24,7 +23,6 @@ services:
 
   backend:
     image: mcr.microsoft.com/dotnet/sdk:8.0
-    container_name: aoiops-backend
     working_dir: /src/backend/src/Api
     volumes:
       - ../../:/src
@@ -47,7 +45,6 @@ services:
 
   frontend:
     image: node:20-bullseye
-    container_name: aoiops-frontend
     working_dir: /src/frontend
     volumes:
       - ../../:/src
@@ -64,17 +61,23 @@ services:
       bash -lc "npm install &&
       npm run dev -- --host 0.0.0.0 --port 5173"
 
-  data-simulator:
+  ingestion:
+    # 單一容器：設備事件 Producer + Kafka→DB 落地 Writer
     image: python:3.12-slim
-    container_name: aoiops-data-simulator
-    working_dir: /src/services/data-simulator
+    working_dir: /src/services/ingestion
     volumes:
       - ../../:/src
     environment:
+      - PYTHONUNBUFFERED=1
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - KAFKA_TOPIC_INSPECTION=aoi.inspection.raw
+      - KAFKA_CONSUMER_GROUP=aoiops-ingestion-writer
       - DB_CONNECTION=Host=db;Port=5432;Database=AOIOpsPlatform;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres};
     depends_on:
       db:
         condition: service_healthy
+      kafka:
+        condition: service_started
     command: >
       bash -lc "pip install -r requirements.txt &&
       python -m app"
@@ -85,7 +88,6 @@ services:
     # - NumPy 的矩陣運算比在 C# 裡手刻更簡潔；計算密集邏輯適合 Python。
     # - Port 8001 避免與 C# 後端（8080）衝突。
     image: python:3.12-slim
-    container_name: aoiops-spc-service
     working_dir: /src/services/spc-service
     volumes:
       - ../../:/src
@@ -105,7 +107,6 @@ services:
   kafka:
     # 使用官方 Apache Kafka image，避免第三方 tag 不存在造成新手卡住 pull 失敗
     image: apache/kafka:3.7.0
-    container_name: aoiops-kafka
     restart: unless-stopped
     environment:
       # 為什麼用 KRaft（不需要 Zookeeper）：
@@ -114,12 +115,22 @@ services:
       # 官方 image 的 env key 命名與 bitnami 不同（不帶 KAFKA_CFG_ 前綴）
       - KAFKA_NODE_ID=1
       - KAFKA_PROCESS_ROLES=controller,broker
-      - KAFKA_CONTROLLER_QUORUM_VOTERS=1@aoiops-kafka:9093
+      # 使用 service name `kafka` 當作容器內部 DNS 名稱，避免移除 container_name 後 hostname 找不到
+      - KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      # 只提供 Docker network 內部連線：
+      # - 避免 advertised=localhost 讓 container 內 client（consumer group 協調）回連到自己，造成「poll 永遠拿不到資料」
       - KAFKA_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093
-      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
       - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
       - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
       - KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      # 單 broker 開發環境必備：
+      # - consumer group 需要 __consumer_offsets topic；預設 RF=3 會導致建立失敗，進而造成「永遠無法分配 partition」
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
+      # 讓 group rebalance 更快（開發體驗用）
+      - KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0
     ports:
       - "9092:9092"
     volumes:
@@ -127,7 +138,6 @@ services:
 
   rabbitmq:
     image: rabbitmq:3-management
-    container_name: aoiops-rabbitmq
     restart: unless-stopped
     environment:
       # 為什麼先用預設帳密（開發用）：
@@ -142,7 +152,6 @@ services:
 
   influxdb:
     image: influxdb:2.7
-    container_name: aoiops-influxdb
     restart: unless-stopped
     environment:
       # InfluxDB 2.x 初始化（開發用最小設定）

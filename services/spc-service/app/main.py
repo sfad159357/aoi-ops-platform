@@ -15,7 +15,7 @@ Port：8001（避免與 C# 後端的 8080 衝突）
 
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from .models import (
@@ -32,6 +32,7 @@ from .demo_data import (
     gen_xbar_r_demo, gen_imr_demo, gen_p_chart_demo,
     gen_c_chart_demo, gen_capability_demo,
 )
+from .db import list_tools as db_list_tools, fetch_process_run_metric
 
 # ─── App 建立 ────────────────────────────────────────────────────────────
 app = FastAPI(
@@ -63,6 +64,44 @@ def health() -> dict:
     """確認 SPC Service 是否存活"""
     return {"status": "ok", "service": "spc-service"}
 
+
+# ─── Live（真資料）端點：從 PostgreSQL 讀取製程量測後計算 SPC ────────────────
+
+@app.get("/api/spc/live/tools", tags=["Live"])
+def live_tools() -> dict:
+    """
+    取得 tools 清單（供前端 Live 模式下拉選單使用）。
+
+    為什麼由 SPC Service 提供：
+    - 前端不需要知道 DB schema 或另外打一套 .NET API。
+    - SPC Live 是「查資料 + 算統計」的整體功能，用同一個服務封裝更容易維護。
+    """
+
+    return {"tools": db_list_tools()}
+
+
+@app.get("/api/spc/live/imr", response_model=IMRResult, tags=["Live"])
+def live_imr(
+    tool_code: str | None = Query(default=None, description="工具代號（不傳則取全體）"),
+    metric: str = Query(default="temperature", description="temperature|pressure|yield_rate"),
+    limit: int = Query(default=60, ge=10, le=500, description="取最近 N 筆"),
+    usl: float | None = Query(default=None, description="規格上限（可選）"),
+    lsl: float | None = Query(default=None, description="規格下限（可選）"),
+    target: float | None = Query(default=None, description="目標值（可選）"),
+) -> IMRResult:
+    """
+    Live I-MR：從 PostgreSQL `process_runs` 拉出某個 metric 序列後直接計算 I-MR。
+
+    解決什麼問題：
+    - 讓 SPC 圖表的資料來源真正來自「設備回傳 → Kafka → DB」，而不是 demo 或前端寫死。
+    """
+
+    rows = fetch_process_run_metric(tool_code=tool_code, metric=metric, limit=limit)
+    values = [r.value for r in rows]
+    if len(values) < 10:
+        raise HTTPException(status_code=422, detail="資料不足（至少需要 10 點才能計算 I-MR）")
+
+    return calc_imr(IMRInput(values=values, usl=usl, lsl=lsl, target=target))
 
 # ─── 計量型管制圖 ────────────────────────────────────────────────────────
 

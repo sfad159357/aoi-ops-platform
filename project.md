@@ -5,7 +5,7 @@
 生產資訊監控，並以 **SPC（統計製程管制）** 做製程穩定性與異常趨勢偵測。
 
 主體用 C# / ASP.NET Core，輔助模組用 Python。
-模擬真實 MES 場景：設備數據收集（MQTT → Kafka）、製程監控、異常告警、
+模擬真實 MES 場景：設備數據收集（Kafka / RabbitMQ）、製程監控、異常告警、
 缺陷追蹤、業務事件路由（RabbitMQ）、以及 SPC 圖表與規則告警（八大規則 + Ca/Cp/Cpk）。
 
 ---
@@ -14,21 +14,15 @@
 
 #### OT 設備層（現場端）
 AOI Machine / PLC / SCADA
-- 透過 MQTT 協議發送檢測數據（topic: `aoi/inspection/#`）
-- 模擬端用 Python Data Simulator 取代真實設備
-
-#### Edge Broker
-Mosquitto Broker（MQTT pub/sub，輕量邊緣代理）
-- 接收 OT 設備 MQTT 訊息
-- 為什麼保留 Mosquitto：OT 設備標準協議是 MQTT，Mosquitto 是最常見的輕量 Broker，方便未來接真機
+- 透過 **Kafka / RabbitMQ** 發送檢測數據（以事件訊息作為設備傳輸協議）
+- 模擬端用 Python Data Simulator 取代真實設備（直接產生 Kafka/RabbitMQ 訊息）
 
 #### 事件串流層（Kafka，新增）
 Kafka Broker（KRaft mode，single node，Docker 容器化）
-- MQTT Bridge 將 Mosquitto 的訊息轉發給 Kafka Producer
 - Topics：
   - `aoi.inspection.raw`：原始檢測結果（溫度、壓力、良率、缺陷）
   - `aoi.defect.event`：高嚴重度缺陷事件（立即觸發告警）
-- 為什麼要 Kafka：Mosquitto 只是 1 對 1 或廣播，Kafka 讓多個「消費者」可以**各自獨立消費同一份資料流**，不互相影響（例如：InfluxDB Writer、RabbitMQ Publisher、DB Writer 三個消費者同時處理同一則訊息）
+- 為什麼要 Kafka：Kafka 讓多個「消費者」可以**各自獨立消費同一份資料流**，不互相影響（例如：InfluxDB Writer、RabbitMQ Publisher、DB Writer 三個消費者同時處理同一則訊息）
 
 #### IT 應用層（Workers + RabbitMQ，新增）
 - **Consumer Group A — InfluxDB Writer（Python）**
@@ -54,7 +48,7 @@ Kafka Broker（KRaft mode，single node，Docker 容器化）
 - 這是主要拿來對標企業 C#/.NET 技術棧的核心
 
 #### Python Microservices（FastAPI）
-- Data Simulator：模擬 AOI 設備，透過 MQTT 發送假資料
+- Data Simulator：模擬 AOI 設備，透過 Kafka / RabbitMQ 發送假資料
 - Kafka Consumer Workers：InfluxDB Writer / RabbitMQ Publisher / DB Writer
 - **SPC Service（新增）**：統計製程管制計算服務
   - 計量型圖表：Xbar-R、I-MR、Xbar-S
@@ -70,7 +64,7 @@ Kafka Broker（KRaft mode，single node，Docker 容器化）
 
 #### Infra
 Docker Compose 一鍵拉起：
-前端 / 後端 / PostgreSQL / InfluxDB / Mosquitto / Kafka / RabbitMQ / Python services
+前端 / 後端 / PostgreSQL / InfluxDB / Kafka / RabbitMQ / Python services
 
 ---
 
@@ -107,7 +101,7 @@ Docker Compose 一鍵拉起：
 > 後續若要補強，可再加入：文件上傳、檢索問答、回覆附來源等功能。
 
 #### Data Simulation Module
-- Python simulator 透過 MQTT 發送假資料（模擬 AOI Machine）
+- Python simulator 透過 Kafka / RabbitMQ 發送假資料（模擬 AOI Machine）
 - 正常 / 異常 / 漂移 / 誤判情境
 - 定時模擬機台心跳，寫入 Kafka → 各消費者
 
@@ -124,9 +118,6 @@ documents / document_chunks / copilot_queries（選配，非主線）
 ### 資料流（更新版）
 ```
 Python Data Simulator
-  → MQTT publish（topic: aoi/inspection/#）
-  → Mosquitto Broker
-  → MQTT Bridge → Kafka Producer
   → Kafka（topic: aoi.inspection.raw / aoi.defect.event）
   → Consumer Group A → InfluxDB（時序）
   → Consumer Group B → RabbitMQ → alert queue → PostgreSQL alarms
@@ -148,7 +139,7 @@ SPC Service（Python FastAPI）讀取 PostgreSQL（process_runs / tool_measureme
 frontend/
 backend/
 services/
-  data-simulator/       ← MQTT publisher
+  data-simulator/       ← 設備資料模擬（Kafka/RabbitMQ producer）
   kafka-consumers/
     influx-writer/      ← Consumer Group A
     rabbitmq-publisher/ ← Consumer Group B
@@ -172,7 +163,6 @@ docs/
 | C# / ASP.NET Core | 平台主體、企業系統感、履歷主訊號 |
 | Kafka（KRaft） | 事件串流骨幹、OT→IT 橋接 |
 | RabbitMQ（AMQP） | 業務事件分級路由（告警 / 工單） |
-| Mosquitto（MQTT） | OT 邊緣代理、貼近真實設備協議 |
 | Python（FastAPI） | AI、影像、消費者 Worker、模擬器 |
 | InfluxDB | 時序儲存、機台心跳、良率趨勢 |
 | PostgreSQL | 業務關聯資料、主要查詢來源 |

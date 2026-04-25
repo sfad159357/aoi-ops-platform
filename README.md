@@ -1,7 +1,7 @@
 ## AOI Ops Platform（MVP）
 
 模擬高科技製造場景的生產資訊系統，
-涵蓋設備數據收集（MQTT→Kafka）、製程監控、缺陷管理、業務事件路由（RabbitMQ），並以 **SPC（統計製程管制）** 製作製程監控圖表與異常趨勢偵測。
+涵蓋設備數據收集（Kafka / RabbitMQ）、製程監控、缺陷管理、業務事件路由（RabbitMQ），並以 **SPC（統計製程管制）** 製作製程監控圖表與異常趨勢偵測。
 
 用 **.NET（分層架構）+ Kafka + RabbitMQ + PostgreSQL + InfluxDB + Python（SPC Service）** 模擬 OT/IT 融合的 MES/AOI 場景，展示「企業後端設計 + 事件驅動架構 + 資料建模 + 可容器化落地」能力。
 
@@ -11,10 +11,6 @@
 
 ```
 🏭 AOI Machine / PLC / SCADA
-   │  MQTT pub（topic: aoi/inspection/#）
-   ▼
-📡 Mosquitto Broker（Edge MQTT Broker）
-   │  MQTT Bridge → Kafka Producer
    ▼
 ⚡ Kafka Broker（事件串流骨幹，KRaft mode）
    │  topic: aoi.inspection.raw
@@ -37,8 +33,7 @@
 
 本專案模擬真實 MES/AOI 架構：
 
-- Python Data Simulator 透過 **MQTT** 模擬設備發送製造數據
-- Mosquitto Broker 接收後，透過 **MQTT Bridge → Kafka Producer** 轉發到 Kafka
+- `ingestion`（單一容器）透過 **Kafka** 模擬設備發送製造數據，並同時消費後落地 PostgreSQL（MVP 先求端到端打通）
 - Kafka 讓多個消費者（InfluxDB Writer、RabbitMQ Publisher、DB Writer）**各自獨立消費同一份資料流**
 - **RabbitMQ** 做業務事件分級路由：`alert` queue 觸發告警記錄，`workorder` queue 觸發工單建立
 - **ASP.NET Core API** 整合讀取 PostgreSQL + InfluxDB，提供 REST API
@@ -58,7 +53,6 @@
 | 後端          | C# / ASP.NET Core Web API | 主業務邏輯、REST API              |
 | 事件串流        | **Kafka（KRaft mode）**     | OT→IT 事件骨幹（新增）              |
 | 業務路由        | **RabbitMQ（AMQP）**        | alert / workorder queue（新增） |
-| Edge Broker | MQTT（Mosquitto）           | OT 設備邊緣代理                   |
 | 結構化資料庫      | PostgreSQL                | 業務資料、工單、異常記錄                |
 | 時序資料庫       | InfluxDB                  | 機台心跳、良率趨勢                   |
 | 視覺化         | Grafana                   | InfluxDB 時序儀表板（規劃）          |
@@ -80,15 +74,11 @@
 ### 資料流
 
 ```
-Python Simulator
-  → MQTT publish
-  → Mosquitto Broker
-  → MQTT Bridge → Kafka（aoi.inspection.raw / aoi.defect.event）
-  → Consumer A → InfluxDB（時序）
-  → Consumer B → RabbitMQ → alert / workorder → PostgreSQL
-  → Consumer C → PostgreSQL（業務資料）
-  → ASP.NET Core API
-  → React Dashboard / Grafana 視覺化
+ingestion（Producer + Kafka→DB writer）
+  → Kafka publish（aoi.inspection.raw）
+  → ingestion consumer group → PostgreSQL（process_runs）
+  → spc-service Live API（讀 DB 計算 SPC）
+  → React SPC Dashboard（Live 模式）
 ```
 
 ---
@@ -97,20 +87,18 @@ Python Simulator
 
 - `frontend/`：React + TypeScript（Vite）
 - `backend/`：ASP.NET Core Web API（Api / Application / Domain / Infrastructure）
-- `services/`：Python（data-simulator / kafka-consumers / spc-service）
-  - `kafka-consumers/influx-writer/`：Consumer Group A
-  - `kafka-consumers/rabbitmq-publisher/`：Consumer Group B
-  - `kafka-consumers/db-writer/`：Consumer Group C
-  - `spc-service/`：SPC 計算服務（FastAPI，port 8001）
-- `infra/`：Docker Compose、Mosquitto、Kafka、RabbitMQ、InfluxDB、DB migrations
-- `docs/`：架構、ERD、API spec、MQTT 資料流、Kafka 事件格式
+- `services/`：Python（`ingestion` / `spc-service`）
+  - `ingestion/`：單一容器（Producer + Kafka Consumer + PostgreSQL writer）
+  - `spc-service/`：SPC 計算服務（FastAPI，port 8001，含 Live 模式）
+- `infra/`：Docker Compose、Kafka、RabbitMQ、InfluxDB、DB migrations
+- `docs/`：架構、ERD、API spec、Kafka / RabbitMQ 資料流、事件格式
 
 ---
 
 ### Quick Start
 
 ```bash
-docker compose -f infra/docker/docker-compose.yml up
+docker compose -p aoiops -f infra/docker/docker-compose.yml up -d
 ```
 
 - **DB 健康檢查**：啟動後打 `GET /api/health/db`
@@ -179,4 +167,5 @@ DOCKER_HOST=unix:///var/run/docker.sock docker run --rm \
 
 - 新手 W02 開發指南：`docs/week2-w02-guide.md`
 - 開發除錯筆記（面試可講）：`docs/debug-notes.md`
+- Troubleshooting（ingestion 沒落地 process_runs）：`docs/troubleshooting-ingestion-process-runs.md`
 

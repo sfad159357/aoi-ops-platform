@@ -25,7 +25,7 @@ public sealed class Alarm
     public string? Status { get; set; }
 
     /// <summary>
-    /// 告警來源（mqtt / kafka / manual）。
+    /// 告警來源（kafka / rabbitmq / manual）。
     /// 為什麼要留這個欄位：當你後面加入 Kafka/RabbitMQ 後，告警可能來自不同通道；
     /// 留來源可以幫你 debug「是哪條資料管線出問題」。
     /// </summary>

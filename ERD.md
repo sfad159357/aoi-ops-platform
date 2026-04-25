@@ -81,7 +81,7 @@
 | triggered_at | timestamptz | |
 | cleared_at | timestamptz | nullable |
 | status | varchar | active / cleared |
-| source | varchar | **新增**：mqtt / kafka / manual（來源識別） |
+| source | varchar | **新增**：kafka / rabbitmq / manual（來源識別） |
 
 ### 7. defects（缺陷）
 | 欄位 | 類型 | 說明 |

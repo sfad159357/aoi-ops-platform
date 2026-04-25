@@ -27,6 +27,7 @@ import ProcessCapabilityCard from '../components/spc/ProcessCapabilityCard'
 import RulesViolationTable from '../components/spc/RulesViolationTable'
 import {
   analyzeXbarR, analyzeIMR, analyzePChart, analyzeCChart,
+  analyzeLiveIMR, getLiveTools,
   DEMO_XBAR_R, DEMO_IMR, DEMO_P_CHART, DEMO_C_CHART,
 } from '../api/spc'
 import type { XbarRResult, IMRResult, AttributeChartResult } from '../api/spc'
@@ -55,8 +56,14 @@ export default function SpcDashboard() {
   const [pResult,     setPResult]       = useState<AttributeChartResult | null>(null)
   const [cResult,     setCResult]       = useState<AttributeChartResult | null>(null)
 
-  // 模式：demo（前端內建）或 api（打後端）
-  const [mode, setMode] = useState<'demo' | 'api'>('demo')
+  // 模式：demo（前端內建）/ api（打後端，demo payload）/ live（真資料：DB→SPC）
+  const [mode, setMode] = useState<'demo' | 'api' | 'live'>('demo')
+
+  // Live 模式控制項（先針對 I-MR 走通：process_runs 的 temperature/pressure/yield_rate）
+  const [liveTools, setLiveTools] = useState<Array<{ tool_code: string; tool_name: string }>>([])
+  const [liveToolCode, setLiveToolCode] = useState<string>('') // 空字串代表不篩 tool（全體）
+  const [liveMetric, setLiveMetric] = useState<'temperature' | 'pressure' | 'yield_rate'>('temperature')
+  const [liveLimit, setLiveLimit] = useState<number>(60)
 
   /**
    * 執行 Demo 模式分析：用前端內建資料打後端計算。
@@ -70,6 +77,20 @@ export default function SpcDashboard() {
     setLoading(true)
     setError(null)
     try {
+      if (mode === 'live') {
+        // Live 模式（真資料）：目前先支援 I-MR，讓 SPC 可以直接吃 Kafka→DB 的資料
+        if (tab !== 'imr') {
+          throw new Error('Live 模式目前先提供 I-MR（下一步再加 Xbar-R/P/C）')
+        }
+        const res = await analyzeLiveIMR({
+          tool_code: liveToolCode || undefined,
+          metric: liveMetric,
+          limit: liveLimit,
+        })
+        setImrResult(res)
+        return
+      }
+
       if (tab === 'xbar-r') {
         const res = await analyzeXbarR(DEMO_XBAR_R)
         setXbarRResult(res)
@@ -86,19 +107,28 @@ export default function SpcDashboard() {
     } catch (e) {
       setError(
         e instanceof Error
-          ? `SPC Service 連線失敗：${e.message}\n\n` +
-            `請確認 services/spc-service 是否已啟動（port 8001）。\n` +
-            `啟動指令：cd services/spc-service && pip install -r requirements.txt && uvicorn app.main:app --port 8001`
+          ? `SPC 計算失敗：${e.message}\n\n` +
+            `若是 422（資料不足），代表 DB 裡的 process_runs 還不夠點數。\n` +
+            `請啟動：data-simulator + kafka-db-writer（Kafka→DB 落地），跑 1–2 分鐘後再試。\n` +
+            `若是連線錯誤，請確認 spc-service 是否在 port 8001。`
           : String(e)
       )
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [mode, liveToolCode, liveMetric, liveLimit])
+
+  // Live 模式載入 tools（下拉用）
+  useEffect(() => {
+    if (mode !== 'live') return
+    getLiveTools()
+      .then((r) => setLiveTools(r.tools))
+      .catch(() => setLiveTools([]))
+  }, [mode])
 
   // 頁籤切換時自動載入 Demo 資料
   useEffect(() => {
-    if (mode === 'api') {
+    if (mode === 'api' || mode === 'live') {
       void runAnalysis(activeTab)
     }
   }, [activeTab, mode, runAnalysis])
@@ -123,12 +153,12 @@ export default function SpcDashboard() {
       {/* 模式切換 */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center' }}>
         <span style={{ fontSize: 12, color: '#6b7280' }}>資料來源：</span>
-        {(['demo', 'api'] as const).map((m) => (
+        {(['demo', 'api', 'live'] as const).map((m) => (
           <button
             key={m}
             onClick={() => {
               setMode(m)
-              if (m === 'api') void runAnalysis(activeTab)
+              if (m === 'api' || m === 'live') void runAnalysis(activeTab)
             }}
             style={{
               padding: '4px 14px',
@@ -141,10 +171,14 @@ export default function SpcDashboard() {
               fontWeight: mode === m ? 600 : 400,
             }}
           >
-            {m === 'demo' ? '🖥 前端 Demo（內建資料）' : '🔌 API 模式（打後端計算）'}
+            {m === 'demo'
+              ? '🖥 前端 Demo（內建資料）'
+              : m === 'api'
+                ? '🔌 API 模式（Demo payload→後端計算）'
+                : '🟢 Live（Kafka→DB→SPC）'}
           </button>
         ))}
-        {mode === 'api' && (
+        {(mode === 'api' || mode === 'live') && (
           <button
             onClick={() => void runAnalysis(activeTab)}
             disabled={loading}
@@ -162,6 +196,78 @@ export default function SpcDashboard() {
           </button>
         )}
       </div>
+
+      {/* Live 模式控制項（目前只針對 I-MR） */}
+      {mode === 'live' && (
+        <div style={{
+          background: '#111827',
+          border: '1px solid #374151',
+          borderRadius: 10,
+          padding: '12px 16px',
+          marginBottom: 16,
+          display: 'flex',
+          gap: 12,
+          flexWrap: 'wrap',
+          alignItems: 'center',
+        }}>
+          <div style={{ fontSize: 12, color: '#9ca3af', fontWeight: 600 }}>Live 設定</div>
+
+          <label style={{ fontSize: 12, color: '#9ca3af' }}>
+            Tool：
+            <select
+              value={liveToolCode}
+              onChange={(e) => setLiveToolCode(e.target.value)}
+              style={{ marginLeft: 6, background: '#0d1117', color: '#e5e7eb', border: '1px solid #374151', borderRadius: 6, padding: '4px 8px' }}
+            >
+              <option value="">（全部）</option>
+              {liveTools.map((t) => (
+                <option key={t.tool_code} value={t.tool_code}>
+                  {t.tool_code} — {t.tool_name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label style={{ fontSize: 12, color: '#9ca3af' }}>
+            Metric：
+            <select
+              value={liveMetric}
+              onChange={(e) => setLiveMetric(e.target.value as typeof liveMetric)}
+              style={{ marginLeft: 6, background: '#0d1117', color: '#e5e7eb', border: '1px solid #374151', borderRadius: 6, padding: '4px 8px' }}
+            >
+              <option value="temperature">temperature</option>
+              <option value="pressure">pressure</option>
+              <option value="yield_rate">yield_rate</option>
+            </select>
+          </label>
+
+          <label style={{ fontSize: 12, color: '#9ca3af' }}>
+            Limit：
+            <input
+              type="number"
+              min={10}
+              max={500}
+              value={liveLimit}
+              onChange={(e) => setLiveLimit(Number(e.target.value))}
+              style={{ marginLeft: 6, width: 90, background: '#0d1117', color: '#e5e7eb', border: '1px solid #374151', borderRadius: 6, padding: '4px 8px' }}
+            />
+          </label>
+
+          <button
+            onClick={() => {
+              setActiveTab('imr')
+              void runAnalysis('imr')
+            }}
+            style={{ padding: '5px 12px', borderRadius: 8, border: '1px solid #3b82f6', background: '#1e3a5f', color: '#60a5fa', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}
+          >
+            套用並計算 I‑MR
+          </button>
+
+          <div style={{ fontSize: 11, color: '#6b7280' }}>
+            資料來源：PostgreSQL `process_runs`（由 Kafka `aoi.inspection.raw` 落地）
+          </div>
+        </div>
+      )}
 
       {/* 錯誤提示 */}
       {error && (

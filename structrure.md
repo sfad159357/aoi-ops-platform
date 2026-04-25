@@ -22,7 +22,6 @@ aoi-ops-platform/
       Domain/           ← Entity、ValueObject、業務規則（最純粹的一層）
       Infrastructure/
         Data/           ← EF Core DbContext、Repository 實作
-        Mqtt/           ← MQTT subscriber（訂閱 Mosquitto，解析訊息）
         TimeSeries/     ← InfluxDB 寫入邏輯（讀取 yield_trend / tool_metrics）
         Messaging/      ← RabbitMQ / Kafka 整合（可選：若後端需直接消費）
     tests/
@@ -31,7 +30,7 @@ aoi-ops-platform/
   services/
     data-simulator/
       app/
-        mqtt_publisher.py     ← 核心：模擬 AOI 設備透過 MQTT 發送數據
+        __main__.py           ← 核心：模擬 AOI 設備直接發送 Kafka 事件（不經 MQTT）
         scenario/             ← 正常 / 異常 / 漂移 / 誤判情境定義
       requirements.txt
       Dockerfile
@@ -66,7 +65,7 @@ aoi-ops-platform/
 
   infra/
     docker/
-      docker-compose.yml      ← 包含：PostgreSQL / InfluxDB / Mosquitto / Kafka / RabbitMQ
+      docker-compose.yml      ← 包含：PostgreSQL / InfluxDB / Kafka / RabbitMQ
                                         / Backend / Frontend / Python Services
     db/
       init/                   ← Postgres init script（建表 + seed，第一次啟動自動跑）
@@ -86,7 +85,6 @@ aoi-ops-platform/
     erd.md                    ← 資料表定義（PostgreSQL + InfluxDB measurement）
     api-spec.md               ← REST API 規格
     product-scope.md          ← 功能邊界
-    mqtt-flow.md              ← MQTT 資料流（設備 → Mosquitto）
     kafka-events.md           ← Kafka topic / payload 格式（新增）
     rabbitmq-routing.md       ← RabbitMQ exchange / queue 路由設計（新增）
 

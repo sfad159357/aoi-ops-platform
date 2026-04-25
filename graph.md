@@ -8,18 +8,14 @@
 ## 1. 系統脈絡（誰跟誰說話）
 
 > 2026-04-24 更新：加入 Kafka 事件串流層、RabbitMQ 業務路由層、InfluxDB 時序儲存，對齊 HTML 架構設計圖。  
-> **為什麼這樣設計**：OT 設備（AOI / PLC）只懂 MQTT，IT 系統需要可重播、可多消費者的事件流；Kafka 做兩者橋接，RabbitMQ 再做業務事件分級路由，讓「告警通知」與「工單觸發」職責分離、互不干擾。
+> **為什麼這樣設計**：本專案取消 MQTT（不保留 Mosquitto / Bridge）。OT 設備資料以 **Kafka（事件流）/ RabbitMQ（業務路由）** 作為傳輸協議，讓 IT 系統具備可重播、可多消費者 fan-out 的能力；RabbitMQ 再做業務事件分級路由，讓「告警通知」與「工單觸發」職責分離、互不干擾。
 
 ```mermaid
 flowchart TB
   subgraph OT["OT 設備層"]
-    MA["🏭 AOI Machine A\nMQTT Client"]
-    MB["🏭 AOI Machine B\nMQTT Client"]
-    PLC["🔧 PLC / SCADA\nOPC-UA / MQTT"]
-  end
-
-  subgraph Edge["Edge Broker"]
-    MOSQ["📡 Mosquitto Broker\nMQTT pub/sub"]
+    MA["🏭 AOI Machine A\nKafka/RabbitMQ Client"]
+    MB["🏭 AOI Machine B\nKafka/RabbitMQ Client"]
+    PLC["🔧 PLC / SCADA\nKafka/RabbitMQ Client"]
   end
 
   subgraph Stream["事件串流層（新增）"]
@@ -53,10 +49,9 @@ flowchart TB
     U["👤 Engineer / Operator"]
   end
 
-  MA -->|MQTT pub| MOSQ
-  MB -->|MQTT pub| MOSQ
-  PLC -->|MQTT pub| MOSQ
-  MOSQ -->|MQTT Bridge → Kafka Producer| KAFKA
+  MA -->|Kafka publish| KAFKA
+  MB -->|Kafka publish| KAFKA
+  PLC -->|Kafka publish| KAFKA
   T1 --> CGA
   T1 --> CGB
   T1 --> CGC
@@ -95,17 +90,15 @@ flowchart LR
     App[Application]
     Dom[Domain]
     Inf[Infrastructure]
-    Mqtt[Infrastructure/Mqtt]
     TS[Infrastructure/TimeSeries]
   end
 
   subgraph Services["services/"]
-    SIM[data-simulator/\nmqtt_publisher.py]
+    SIM[data-simulator/\nproducer.py（Kafka/RabbitMQ）]
     CGA_S[kafka-consumer/\ninflux-writer/]
     CGB_S[kafka-consumer/\nrabbitmq-publisher/]
     CGC_S[kafka-consumer/\ndb-writer/]
-    VIS[vision-helper/]
-    COP[ai-copilot/]
+    SPC[spc-service/]
   end
 
   B --> Backend
@@ -113,7 +106,6 @@ flowchart LR
   App --> Dom
   Inf --> Dom
   Api --> Inf
-  Mqtt --> Inf
   TS --> Inf
   S --> Services
 ```
@@ -124,13 +116,12 @@ flowchart LR
 
 ## 3. 主要資料流：OT 設備 → Kafka → 各消費者（新版）
 
-> **為什麼改成這張圖**：原本「Simulator 直接寫 DB」的流程太簡單，無法反映真實工廠的 OT→IT 整合場景。加入 Kafka 後，你可以在履歷上說「設計過 MQTT Bridge → Kafka → 多消費者 fan-out 架構」，這是相當有說服力的設計經驗。
+> **為什麼改成這張圖**：原本「Simulator 直接寫 DB」的流程太簡單，無法反映真實工廠的 OT→IT 整合場景。加入 Kafka 後，你可以在履歷上說「設計過 Kafka → 多消費者 fan-out 架構」，這是相當有說服力的設計經驗。
 
 ```mermaid
 sequenceDiagram
   autonumber
   participant SIM as Data Simulator（Python）
-  participant MOSQ as Mosquitto Broker
   participant KAFKA as Kafka Broker
   participant CGA as Consumer A（InfluxDB Writer）
   participant CGB as Consumer B（RabbitMQ Publisher）
@@ -142,8 +133,7 @@ sequenceDiagram
   participant UI as React 前端
 
   Note over SIM: 模擬 AOI Machine：<br/>正常 / 異常 / 漂移 / 誤判情境
-  SIM->>MOSQ: MQTT publish（topic: aoi/inspection/#）
-  MOSQ->>KAFKA: MQTT Bridge 轉發 → Kafka Producer
+  SIM->>KAFKA: Kafka publish（topic: aoi.inspection.raw / aoi.defect.event）
   Note over KAFKA: topic: aoi.inspection.raw<br/>topic: aoi.defect.event
 
   par Consumer Fan-out
@@ -200,9 +190,8 @@ sequenceDiagram
 mindmap
   root((AOI Ops Platform))
     OT 接收層
-      MQTT Mosquitto
       Kafka 事件串流
-      MQTT Bridge Producer
+      RabbitMQ 業務路由
     Defect Review
       影像與 metadata
       True / False 標記
@@ -222,7 +211,7 @@ mindmap
       搜尋與問答附來源
       Defect/Alarm 情境建議
     Data Simulation
-      MQTT 假資料發送
+      Kafka/RabbitMQ 假資料發送
       正常/異常/漂移/誤判
       定時模擬機台心跳
 ```

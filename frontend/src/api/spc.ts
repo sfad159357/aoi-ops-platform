@@ -100,7 +100,8 @@ async function spcPost<T>(path: string, body: unknown): Promise<T> {
 async function spcGet<T>(path: string): Promise<T> {
   const res = await fetch(`${SPC_BASE}${path}`)
   if (!res.ok) {
-    throw new Error(`SPC API ${path} failed ${res.status}`)
+    const detail = await res.text()
+    throw new Error(`SPC API ${path} failed ${res.status}: ${detail}`)
   }
   return res.json() as Promise<T>
 }
@@ -161,6 +162,35 @@ export function getDemoData(chartType: string): Promise<{ chart_type: string; de
 /** 確認 SPC 服務健康狀態 */
 export function checkSpcHealth(): Promise<{ status: string }> {
   return spcGet('/api/spc/health')
+}
+
+// ─── Live（真資料）API ───────────────────────────────────────────────────
+
+export type LiveToolItem = { tool_code: string; tool_name: string }
+
+/** 取得 tools 清單（供 Live 模式下拉） */
+export function getLiveTools(): Promise<{ tools: LiveToolItem[] }> {
+  return spcGet('/api/spc/live/tools')
+}
+
+/** 從 DB 拉真資料並計算 I-MR（SPC Live） */
+export function analyzeLiveIMR(params: {
+  tool_code?: string
+  metric?: 'temperature' | 'pressure' | 'yield_rate'
+  limit?: number
+  usl?: number
+  lsl?: number
+  target?: number
+}): Promise<IMRResult> {
+  const q = new URLSearchParams()
+  if (params.tool_code) q.set('tool_code', params.tool_code)
+  if (params.metric) q.set('metric', params.metric)
+  if (params.limit != null) q.set('limit', String(params.limit))
+  if (params.usl != null) q.set('usl', String(params.usl))
+  if (params.lsl != null) q.set('lsl', String(params.lsl))
+  if (params.target != null) q.set('target', String(params.target))
+
+  return spcGet(`/api/spc/live/imr?${q.toString()}`)
 }
 
 // ─── 前端內建 Demo 資料（不需後端也能展示）──────────────────────────────

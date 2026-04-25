@@ -8,7 +8,7 @@ PostgreSQL 資料存取（SPC Live 模式）
 
 解決什麼問題：
 - 前端不需要知道資料表結構（process_runs、tools、lots…），避免耦合到 DB schema。
-- 未來 Kafka/MQTT 進來的資料，只要落到同一張表/欄位，SPC API 不用改就能吃到新來源。
+- 未來 Kafka/RabbitMQ 進來的資料，只要落到同一張表/欄位，SPC API 不用改就能吃到新來源。
 
 注意：
 - 這裡使用 psycopg3（psycopg[binary]），原因是 macOS/CI 環境通常不想編譯依賴，
@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Literal, Sequence
+from typing import Literal
 
 import psycopg
 
@@ -51,7 +51,64 @@ def _get_db_conn_str() -> str:
             "若用 docker-compose 啟動，請在 spc-service 加上 DB_CONNECTION；"
             "若本機跑，請自行 export DB_CONNECTION='Host=localhost;Port=5432;...'"
         )
-    return conn
+    return _normalize_conninfo(conn)
+
+
+def _normalize_conninfo(conn: str) -> str:
+    """
+    將 DB_CONNECTION 正規化成 psycopg 可接受的 conninfo 字串。
+
+    為什麼要做這件事：
+    - 本 repo 其他服務（.NET / docker-compose）多使用 `.NET ConnectionString` 風格：
+      `Host=...;Port=...;Database=...;Username=...;Password=...;`
+    - psycopg3 使用 libpq conninfo 風格（小寫鍵）：`host=... port=... dbname=... user=... password=...`
+    - 如果不轉換，就會出現你現在看到的錯誤：`invalid connection option "Host"`。
+    """
+
+    s = conn.strip()
+
+    # 先判斷是否為 `.NET;` 風格（用分號分隔）。
+    # 注意：`.NET` 也會用 `Host=...`，所以不能只用 `host=` 來判斷是不是 libpq conninfo。
+    if ";" not in s:
+        # 若不是用分號分隔，才判斷是否已經是 libpq conninfo（通常是空白分隔、且帶 host=/dbname=/user=）
+        lowered = s.lower()
+        if "host=" in lowered or "dbname=" in lowered or "user=" in lowered:
+            return s
+
+    # 嘗試解析 `.NET;` 風格 key=value;key=value
+    parts = [p for p in s.split(";") if p.strip()]
+    kv: dict[str, str] = {}
+    for p in parts:
+        if "=" not in p:
+            continue
+        k, v = p.split("=", 1)
+        kv[k.strip().lower()] = v.strip()
+
+    # 常見 key 映射（大小寫不敏感）
+    host = kv.get("host") or kv.get("server")
+    port = kv.get("port")
+    dbname = kv.get("database") or kv.get("dbname")
+    user = kv.get("username") or kv.get("user") or kv.get("uid")
+    password = kv.get("password") or kv.get("pwd")
+
+    # 組成 conninfo（只放有值的欄位）
+    items: list[str] = []
+    if host:
+        items.append(f"host={host}")
+    if port:
+        items.append(f"port={port}")
+    if dbname:
+        items.append(f"dbname={dbname}")
+    if user:
+        items.append(f"user={user}")
+    if password:
+        items.append(f"password={password}")
+
+    if not items:
+        # 萬一輸入完全無法解析，就原樣回傳，讓 psycopg 自己報更精準的錯
+        return s
+
+    return " ".join(items)
 
 
 def list_tools() -> list[dict]:
