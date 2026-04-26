@@ -1,170 +1,180 @@
 # AOI Ops Platform
 
 ## 定位
-模擬高科技製造場景（PCB / 半導體）的 AOI 缺陷管理、
-生產資訊監控，並以 **SPC（統計製程管制）** 做製程穩定性與異常趨勢偵測。
 
-主體用 C# / ASP.NET Core，輔助模組用 Python。
-模擬真實 MES 場景：設備數據收集（Kafka / RabbitMQ）、製程監控、異常告警、
-缺陷追蹤、業務事件路由（RabbitMQ）、以及 SPC 圖表與規則告警（八大規則 + Ca/Cp/Cpk）。
+模擬 **PCB SMT 產線** 的 MES 品質模組（錫膏印刷 → 貼片 → 回焊 → AOI → ICT → FQC），
+以 **Kafka 即時推播 + .NET Core SignalR** 為骨幹，
+即時計算 SPC 八大規則 / Cpk，並以事件驅動方式串接 **工單 / 異常 / 物料追溯** 三組業務模組。
 
----
+主軸：**即時生產 → 儲存 → 消費 → API 回傳 → 即時監控 → 即時運算 → 業務模組 → 可追溯查表**。
 
-### 整體架構
-
-#### OT 設備層（現場端）
-AOI Machine / PLC / SCADA
-- 透過 **Kafka / RabbitMQ** 發送檢測數據（以事件訊息作為設備傳輸協議）
-- 模擬端用 Python Data Simulator 取代真實設備（直接產生 Kafka/RabbitMQ 訊息）
-
-#### 事件串流層（Kafka，新增）
-Kafka Broker（KRaft mode，single node，Docker 容器化）
-- Topics：
-  - `aoi.inspection.raw`：原始檢測結果（溫度、壓力、良率、缺陷）
-  - `aoi.defect.event`：高嚴重度缺陷事件（立即觸發告警）
-- 為什麼要 Kafka：Kafka 讓多個「消費者」可以**各自獨立消費同一份資料流**，不互相影響（例如：InfluxDB Writer、RabbitMQ Publisher、DB Writer 三個消費者同時處理同一則訊息）
-
-#### IT 應用層（Workers + RabbitMQ，新增）
-- **Consumer Group A — InfluxDB Writer（Python）**
-  - 從 `aoi.inspection.raw` 消費 → 寫 InfluxDB（時序資料）
-- **Consumer Group B — RabbitMQ Publisher（Python）**
-  - 判斷是否為異常事件 → publish 至 RabbitMQ exchange
-  - RabbitMQ Queue: `alert` → 觸發告警寫入 PostgreSQL
-  - RabbitMQ Queue: `workorder` → 觸發工單建立
-- **Consumer Group C — DB Writer（Python）**
-  - 從 `aoi.inspection.raw` 消費 → 寫 PostgreSQL（process_runs、defects）
-- **良率統計 Worker（Python / FastAPI）**
-  - 定期聚合 InfluxDB 良率資料，回寫 PostgreSQL 供 dashboard 查詢
-
-#### 儲存層
-- PostgreSQL（結構化業務資料：lot、wafer、tool、recipe、alarm、defect、review、workorder、documents）
-- InfluxDB（時序資料：設備即時數值、良率趨勢）
-- 為什麼兩個 DB：PostgreSQL 適合「跨表查詢、業務流程」；InfluxDB 適合「高頻寫入、時間範圍查詢」
-
-#### Core Backend（C# / ASP.NET Core Web API）
-- 主業務邏輯、帳號、查詢、review workflow、alarm workflow
-- 整合讀取 PostgreSQL 與 InfluxDB
-- 提供 REST API 給前端
-- 這是主要拿來對標企業 C#/.NET 技術棧的核心
-
-#### Python Microservices（FastAPI）
-- Data Simulator：模擬 AOI 設備，透過 Kafka / RabbitMQ 發送假資料
-- Kafka Consumer Workers：InfluxDB Writer / RabbitMQ Publisher / DB Writer
-- **SPC Service（新增）**：統計製程管制計算服務
-  - 計量型圖表：Xbar-R、I-MR、Xbar-S
-  - 計數型圖表：P、Np、C、U
-  - 八大規則偵測（Western Electric Rules）
-  - 製程能力指數：Ca、Cp、Cpk
-  - REST API + Demo 端點（前端展示用）
-
-#### Frontend（React + TypeScript）
-- Dashboard、Defect Review、查詢頁、**SPC 管制圖頁（重點）**
-- 即時監控（未來可接 WebSocket push）
-- 主角不是前端，但展示你能做出可用的操作介面
-
-#### Infra
-Docker Compose 一鍵拉起：
-前端 / 後端 / PostgreSQL / InfluxDB / Kafka / RabbitMQ / Python services
+> 同一份 codebase 透過 **Domain Profile** 機制（`shared/domain-profiles/{profile}.json`），可切換 PCB / 半導體用語與規格。
+> 不做 ML / RAG / Knowledge Copilot，不使用 MQTT / OPC-UA。
 
 ---
 
-### 功能模組
+## 一、整體架構
 
-#### Defect Review Module
-- 匯入 defect image 與 metadata
-- defect list / detail
-- true defect / false alarm 標記
-- defect 分類
-- 相似案例查詢
-- review history
+### 1) OT 設備層（現場 / 模擬）
 
-#### Fab Monitoring Module
-- tool / lot / wafer / recipe dashboard
-- yield trend（InfluxDB 時序）
-- defect trend
-- alarm list（PostgreSQL + RabbitMQ alert queue 觸發）
-- 異常查詢
-- summary report
+`services/ingestion`（Python）：
 
-#### SPC 統計製程管制模組（新增）
-- 計量型管制圖：Xbar-R、I-MR、Xbar-S、I-MR
-- 計數型管制圖：P、Np、C、U
-- 八大規則偵測（嚴重程度分級：red/yellow/green）
-- 製程能力指數：Ca（準確度）、Cp（精密度）、Cpk（綜合）
-- 製程等級判定：A+/A/B/C/D
-- React Dashboard：管制圖視覺化、違規高亮、製程能力卡片
+- 模擬 AOI / SPI / Reflow 等設備持續發送檢測資料；
+- 直接把訊息打到 Kafka，**不經 MQTT / OPC-UA**。
+- 支援 `SIM_SCENARIO=normal|drift|spike|misjudge` 切換情境，方便 demo / 壓測。
 
-#### Knowledge Copilot Module
-> 目前不是專案主線（降級為選配）。  
-> 現階段前端重點是「監控設備回傳數據 → 製作 SPC 圖表」。
->
-> 後續若要補強，可再加入：文件上傳、檢索問答、回覆附來源等功能。
+### 2) 事件串流層（Kafka）
 
-#### Data Simulation Module
-- Python simulator 透過 Kafka / RabbitMQ 發送假資料（模擬 AOI Machine）
-- 正常 / 異常 / 漂移 / 誤判情境
-- 定時模擬機台心跳，寫入 Kafka → 各消費者
+- `aoi.inspection.raw`：原始檢測資料（溫度 / 壓力 / 良率 / 缺陷）
+- `aoi.defect.event`：高嚴重度 defect 事件，觸發業務分流
+
+為什麼要 Kafka：多消費群（InfluxDB / .NET SignalR / Python rabbitmq-publisher）可獨立並行消費同一份資料流，重啟也能 replay。
+
+### 3) IT 應用層
+
+| Worker | 來源 | 落點 |
+|---|---|---|
+| Python `kafka-influx-writer` | Kafka `aoi.inspection.raw` | InfluxDB（時序）|
+| Python `kafka-rabbitmq-publisher` | Kafka `aoi.defect.event` | RabbitMQ alert / workorder |
+| .NET `SpcRealtimeWorker` | Kafka `aoi.inspection.raw` | SignalR `/hubs/spc`（即時 SPC 點 + 違規）|
+| .NET `AlarmRabbitWorker` | RabbitMQ `alert` | PostgreSQL `alarms` + SignalR `/hubs/alarm` |
+| .NET `WorkorderRabbitWorker` | RabbitMQ `workorder` | PostgreSQL `workorders` + SignalR `/hubs/workorder` |
+
+> .NET 是「唯一」對前端 push 的入口；Python workers 只負責落地（時序 / 業務寫入），不直接面對前端，避免 CORS 雙頭管理。
+
+### 4) 儲存層
+
+- **PostgreSQL**：業務資料（lot / wafer / panel / 物料 / 工單 / 異常）
+- **InfluxDB**：時序資料（機台心跳 / 良率趨勢）
+
+### 5) Core Backend（C# / ASP.NET Core 8）
+
+- REST API：`/api/lots`、`/api/alarms`、`/api/workorders`、`/api/trace/panel/{panelNo}`、`/api/meta/profile` …
+- SignalR Hub：`/hubs/spc`、`/hubs/alarm`、`/hubs/workorder`、`/hubs/trace`
+- BackgroundService：
+  - `KafkaConsumerHostedService`（含 `SpcRealtimeWorker`）
+  - `RabbitMqConsumerHostedService`（含 alarm / workorder workers）
+- `DomainProfileService`：啟動載入 `DOMAIN_PROFILE` 對應的 JSON。
+
+### 6) Python Microservices
+
+- `services/ingestion`：模擬產線 + Kafka producer
+- `services/kafka-consumers/influx-writer`：寫 InfluxDB
+- `services/kafka-consumers/rabbitmq-publisher`：判斷 severity → 推 RabbitMQ
+- `services/spc-service`（FastAPI，port 8001）：**批次 / 歷史 SPC 報表**（即時計算已搬到 .NET）
+- `services/rabbitmq-consumers/db-sink`：legacy；W07 起由 .NET 接管 RabbitMQ 消費，docker compose 預設不啟動
+
+### 7) Frontend（React + TypeScript）
+
+- 4 大頁：SPC Dashboard / 工單管理 / 異常記錄 / 物料追溯查詢
+- `@microsoft/signalr` 訂閱對應 Hub
+- 所有中文文案、站別、規格 USL/LSL、KPI 門檻都從 `/api/meta/profile` 取得
+
+### 8) Infra
+
+Docker Compose 一鍵拉起：PostgreSQL / InfluxDB / Kafka / RabbitMQ / 後端 / 前端 / Python services。
 
 ---
 
-### 資料表（PostgreSQL）
-tools / lots / wafers / recipes / process_runs /
-alarms / defects / defect_images / defect_reviews /
-workorders（新增，來自 RabbitMQ workorder queue）/
-documents / document_chunks / copilot_queries（選配，非主線）
+## 二、功能模組
+
+### 1) SPC 統計製程管制
+
+- 即時 X̄-R 雙圖（從 Kafka 推來的點，UCL/CL/LCL 即時計算）
+- 八大規則違規偵測（Western Electric Rules，紅 / 黃 / 綠分級）
+- 製程能力：Ca / Cp / Cpk（A+ / A / B / C / D 等級）
+- KPI 卡：良率 / Cpk / 今日違規 / 每小時產出
+
+### 2) 工單管理
+
+- RabbitMQ `workorder` queue → .NET `WorkorderRabbitWorker` → PostgreSQL `workorders`
+- SignalR `/hubs/workorder` → 前端即時長新一行（高亮 1.5 秒）
+- REST：`GET /api/workorders?take=100` 預載歷史
+
+### 3) 異常記錄
+
+- RabbitMQ `alert` queue → .NET `AlarmRabbitWorker` → PostgreSQL `alarms`
+- SignalR `/hubs/alarm` 即時推
+- 嚴重度 badge：critical / high / medium / low
+
+### 4) 物料追溯查詢
+
+- 入口：`panel_no`（QR Code 對應）
+- API：`GET /api/trace/panel/{panelNo}` 一次回 4 段
+  - 板資訊（panel_no / lot / 狀態 / 建立時間）
+  - 6 站時間軸（SPI / SMT / REFLOW / AOI / ICT / FQC）
+  - 使用物料批號（錫膏 / FR4 / 電容…）
+  - 同 lot / 同物料的相關板（最多 50 張）
+- 站別中文由 `domain profile` 提供
 
 ---
 
-### 資料流（更新版）
+## 三、Kafka / RabbitMQ 分工
+
 ```
-Python Data Simulator
-  → Kafka（topic: aoi.inspection.raw / aoi.defect.event）
-  → Consumer Group A → InfluxDB（時序）
-  → Consumer Group B → RabbitMQ → alert queue → PostgreSQL alarms
-                               → workorder queue → PostgreSQL workorders
-  → Consumer Group C → PostgreSQL process_runs / defects
-
-ASP.NET Core API 讀取 PostgreSQL + InfluxDB
-→ React 前端顯示 dashboard / review / 趨勢
-
-SPC Service（Python FastAPI）讀取 PostgreSQL（process_runs / tool_measurements）
-→ 計算管制圖（Xbar-R / I-MR / P / C ...）、八大規則、Ca/Cp/Cpk
-→ React 前端顯示 SPC Dashboard（違規高亮 + 處理優先級）
+Kafka  = 設備層 fan-out（消費群獨立並行，可 replay）
+RabbitMQ = 業務層分級路由 + ack（告警必處理、工單必建立）
+.NET    = 前端唯一 SignalR push 入口
+Python  = 落地（時序 / 業務寫入），不直接面對前端
 ```
 
 ---
 
-### 目錄切分建議
+## 四、資料表（PostgreSQL）
+
+```
+tools / lots / wafers（含 panel_no） / recipes / process_runs
+alarms / defects / defect_images / defect_reviews
+workorders
+material_lots / panel_material_usage / panel_station_log    -- W08 新增
+documents / document_chunks / copilot_queries               -- 標 deprecated，未來會移除
+```
+
+詳細欄位見 [ERD.md](ERD.md)。
+
+---
+
+## 五、目錄概覽
+
 ```
 frontend/
 backend/
+  src/
+    Api/                Controllers / Hubs / Realtime
+    Application/        Domain / Hubs / Messaging / Spc / Workers
+    Domain/Entities/    Tool / Lot / Wafer / MaterialLot / PanelStationLog ...
+    Infrastructure/     Data / Messaging / Workers
 services/
-  data-simulator/       ← 設備資料模擬（Kafka/RabbitMQ producer）
+  ingestion/
   kafka-consumers/
-    influx-writer/      ← Consumer Group A
-    rabbitmq-publisher/ ← Consumer Group B
-    db-writer/          ← Consumer Group C
-  spc-service/          ← SPC 統計製程管制（新增，port 8001）
-    app/
-      main.py           ← FastAPI 進入點
-      models.py         ← Pydantic 模型
-      spc_engine.py     ← Xbar-R/I-MR/P/Np/C/U 計算引擎
-      rules.py          ← 八大規則偵測邏輯
-      demo_data.py      ← Demo 資料產生器
+    influx-writer/
+    rabbitmq-publisher/
+  spc-service/                      ← 批次 / 歷史 SPC 報表（FastAPI）
+  rabbitmq-consumers/db-sink/       ← legacy；docker compose profile=legacy
+shared/
+  domain-profiles/
+    pcb.json
+    semiconductor.json
 infra/
+  docker/docker-compose.yml
+  db/init/
 docs/
 ```
 
+詳細結構見 [structrure.md](structrure.md)。
+
 ---
 
-### 技術分工
+## 六、技術分工
+
 | 技術 | 角色 |
-|------|------|
-| C# / ASP.NET Core | 平台主體、企業系統感、履歷主訊號 |
-| Kafka（KRaft） | 事件串流骨幹、OT→IT 橋接 |
-| RabbitMQ（AMQP） | 業務事件分級路由（告警 / 工單） |
-| Python（FastAPI） | AI、影像、消費者 Worker、模擬器 |
-| InfluxDB | 時序儲存、機台心跳、良率趨勢 |
-| PostgreSQL | 業務關聯資料、主要查詢來源 |
-| React TypeScript | 展示前端整合能力 |
-| Docker Compose | 全服務容器化，一鍵啟動 |
+|---|---|
+| ASP.NET Core 8 + SignalR | 平台主體、REST / WebSocket、即時推播 |
+| Kafka（KRaft） | 設備層事件骨幹，多消費群 fan-out |
+| RabbitMQ（AMQP） | 業務事件分級路由（alert / workorder） |
+| Python（FastAPI） | 模擬器、Kafka 消費端、批次 SPC 報表 |
+| InfluxDB | 時序：機台心跳、良率趨勢 |
+| PostgreSQL | 業務資料、SPC 計算來源、物料追溯 |
+| React + TypeScript | 4 大頁，SignalR 即時推播 |
+| Domain Profile JSON | 同 codebase 切換不同產業 demo |
+| Docker Compose | 一鍵啟動 |

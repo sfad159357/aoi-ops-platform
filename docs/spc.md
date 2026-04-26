@@ -16,10 +16,10 @@
    - 優點：落地快、資料一致、容易做篩選（tool/lot/時間區間）
    - SPC Service 做的事：**從 DB 拉序列 → 算管制圖 + 八大規則 + Ca/Cp/Cpk → 回前端**
 
-2. **事件流模式（Kafka/MQTT/RabbitMQ，後做、可擴展）**
-   - 來源：設備/模擬器 → MQTT → Kafka → Consumer 落 DB（或寫 InfluxDB）
-   - 重點：**SPC 不應直接「吃 Kafka」做統計**（會遇到 offset、重放、缺點補齊等一致性問題）
-   - 正確做法：Kafka/MQTT 先負責「事件輸送」，最後仍落到 DB/TSDB，再由 SPC Service 查詢。
+2. **事件流模式（Kafka，已套用）**
+   - 來源：設備/模擬器 → Kafka → Consumer 落 DB（或寫 InfluxDB）
+   - 重點：批次 / 歷史 SPC 報表 **走 PostgreSQL / InfluxDB 查詢**（避免 offset、重放、補點等一致性問題）
+   - 即時 SPC 監控由 .NET `SpcRealtimeWorker` 直接消費 Kafka `aoi.inspection.raw`，計算後推 SignalR `/hubs/spc`。前端不直接吃 Kafka。
 
 ### 目前狀態（本 repo 到目前這一步）
 
@@ -215,7 +215,7 @@
 
 ---
 
-## 延伸：怎麼把 MQTT/Kafka/RabbitMQ 接進來（不改 SPC API）
+## 延伸：怎麼把 Kafka/RabbitMQ 接進來（不改 SPC API）
 
 你只要做到一件事：
 
@@ -226,11 +226,19 @@
 - SPC Service 的 Live 查詢改成查 `tool_measurements`
 - 前端完全不需要變
 
+> v2 即時 SPC 已改為 .NET 直接從 Kafka 消費 → SignalR push（見 [realtime-signalr.md](realtime-signalr.md)）；
+> Python `spc-service` 保留作 **批次 / 歷史 SPC 報表**。
+
 ---
 
 ## 附錄：本專案目前相關檔案位置
 
-- SPC Service
+- 即時 SPC（C#）
+  - `backend/src/Application/Spc/SpcRulesEngine.cs`：八大規則 + UCL/CL/LCL
+  - `backend/src/Application/Spc/SpcWindowState.cs`：滑動視窗
+  - `backend/src/Application/Spc/ProcessCapability.cs`：Ca/Cp/Cpk + 等級
+  - `backend/src/Application/Workers/SpcRealtimeWorker.cs`：Kafka consumer + SignalR push
+- 批次 / 歷史 SPC（Python）
   - `services/spc-service/app/spc_engine.py`：管制圖計算核心
   - `services/spc-service/app/rules.py`：八大規則
   - `services/spc-service/app/main.py`：API 路由

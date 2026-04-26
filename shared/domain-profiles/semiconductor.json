@@ -1,0 +1,60 @@
+{
+  "profile_id": "semiconductor",
+  "display_name": "半導體 AOI Ops 平台",
+  "factory": {
+    "name": "範例：晶圓廠 Demo",
+    "site": "新竹科學園區"
+  },
+  "entities": {
+    "panel": {
+      "table": "wafers",
+      "label_zh": "晶圓",
+      "id_prefix": "WFR"
+    },
+    "lot": {
+      "table": "lots",
+      "label_zh": "工單批次",
+      "id_prefix": "LOT"
+    },
+    "tool": {
+      "table": "tools",
+      "label_zh": "機台"
+    }
+  },
+  "stations": [
+    { "code": "PHOTO",  "label_zh": "黃光",       "seq": 1 },
+    { "code": "ETCH",   "label_zh": "蝕刻",       "seq": 2 },
+    { "code": "DEPO",   "label_zh": "薄膜沉積",   "seq": 3 },
+    { "code": "CMP",    "label_zh": "化學機械研磨", "seq": 4 },
+    { "code": "AOI",    "label_zh": "AOI 光學檢測", "seq": 5 },
+    { "code": "PROBE",  "label_zh": "晶圓針測",   "seq": 6 }
+  ],
+  "lines": [
+    { "code": "FAB-A", "label_zh": "FAB 線 A" },
+    { "code": "FAB-B", "label_zh": "FAB 線 B" }
+  ],
+  "parameters": [
+    { "code": "temperature", "label_zh": "製程溫度", "unit": "°C", "usl": 1100, "lsl": 1000, "target": 1050 },
+    { "code": "pressure",    "label_zh": "腔體壓力", "unit": "Torr", "usl": 1.05, "lsl": 0.95, "target": 1.0 },
+    { "code": "yield_rate",  "label_zh": "良率",     "unit": "%",   "usl": 1.0,  "lsl": 0.95, "target": 0.98 }
+  ],
+  "menus": [
+    { "id": "spc",   "label_zh": "SPC 統計製程管制" },
+    { "id": "wo",    "label_zh": "工單管理" },
+    { "id": "alarm", "label_zh": "異常記錄" },
+    { "id": "trace", "label_zh": "晶圓追溯查詢" }
+  ],
+  "kpi": {
+    "yield_rate":      { "label_zh": "綜合良率",   "good_threshold": 0.97 },
+    "cpk":             { "label_zh": "Cpk 值",      "good_threshold": 1.33 },
+    "violation_today": { "label_zh": "今日違規數", "good_threshold_lt": 3 },
+    "panels_per_hour": { "label_zh": "每小時產出", "good_threshold": 50 }
+  },
+  "wording": {
+    "panel_singular":   "晶圓",
+    "panel_plural":     "晶圓",
+    "panel_id_label":   "晶圓號",
+    "lot_id_label":     "批號",
+    "process_run_label": "製程紀錄"
+  }
+}

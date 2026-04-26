@@ -1,0 +1,50 @@
+{
+  "profileId": "pcb",
+  "displayName": "PCB SMT 產線 MES",
+  "factory": { "name": "範例：華通電腦", "site": "桃園廠" },
+  "entities": {
+    "panel": { "table": "wafers", "labelZh": "板", "idPrefix": "PCB" },
+    "lot":   { "table": "lots",   "labelZh": "工單批次", "idPrefix": "WO" },
+    "tool":  { "table": "tools",  "labelZh": "機台" }
+  },
+  "stations": [
+    { "code": "SPI",    "labelZh": "錫膏印刷",   "seq": 1 },
+    { "code": "SMT",    "labelZh": "零件貼片",   "seq": 2 },
+    { "code": "REFLOW", "labelZh": "回焊爐",     "seq": 3 },
+    { "code": "AOI",    "labelZh": "AOI 光學檢測","seq": 4 },
+    { "code": "ICT",    "labelZh": "電性測試",   "seq": 5 },
+    { "code": "FQC",    "labelZh": "最終檢驗",   "seq": 6 }
+  ],
+  "lines": [
+    { "code": "SMT-A", "labelZh": "SMT 線 A" },
+    { "code": "SMT-B", "labelZh": "SMT 線 B" },
+    { "code": "AOI-A", "labelZh": "AOI 線 A" }
+  ],
+  "parameters": [
+    { "code": "solder_thickness", "labelZh": "錫膏厚度",    "unit": "μm", "usl": 242, "lsl": 228, "target": 235 },
+    { "code": "reflow_peak_temp", "labelZh": "回焊溫度",    "unit": "°C", "usl": 252, "lsl": 245, "target": 248 },
+    { "code": "hole_tolerance",   "labelZh": "孔徑公差",    "unit": "μm", "usl": 50,  "lsl": -50, "target": 0   },
+    { "code": "line_width_dev",   "labelZh": "線寬偏差",    "unit": "μm", "usl": 25,  "lsl": -25, "target": 0   },
+    { "code": "placement_offset", "labelZh": "貼片偏移量",  "unit": "μm", "usl": 80,  "lsl": 0,   "target": 30  },
+    { "code": "yield_rate",       "labelZh": "良率",        "unit": "%",  "usl": 1.0, "lsl": 0.92,"target": 0.97 }
+  ],
+  "menus": [
+    { "id": "spc",   "labelZh": "SPC 統計製程管制" },
+    { "id": "wo",    "labelZh": "工單管理" },
+    { "id": "alarm", "labelZh": "異常記錄" },
+    { "id": "trace", "labelZh": "物料追溯查詢" }
+  ],
+  "kpi": {
+    "yield_rate":      { "labelZh": "綜合良率",   "goodThreshold": 0.95 },
+    "cpk":             { "labelZh": "Cpk 值",      "goodThreshold": 1.33 },
+    "violation_today": { "labelZh": "今日違規數", "goodThresholdLt": 5 },
+    "panels_per_hour": { "labelZh": "每小時產出", "goodThreshold": 80 }
+  },
+  "wording": {
+    "panel_singular": "板",
+    "panel_plural": "板",
+    "panel_id_label": "板號",
+    "lot_id_label": "工單號",
+    "process_run_label": "生產紀錄"
+  }
+}

@@ -1,78 +1,102 @@
 # AOI Ops Platform — 架構與資料流視覺化（Mermaid）
 
-> **為什麼要有這份檔案**：把 `project.md`、`structrure.md`、`ERD.md` 裡的文字規格，濃縮成可一眼掃過的圖；之後規格變更時，只要改這裡對應的區塊即可持續迭代。  
-> **如何更新**：新增模組時補「系統脈絡圖」的節點；API 或批次流程變更時改「資料流」sequence；資料表增刪時同步「ERD」區塊。圖與文字來源以根目錄 `project.md` / `structrure.md` / `ERD.md` 為準。
+> **為什麼要有這份檔案**：把 `project.md`、`structrure.md`、`ERD.md` 裡的文字規格，濃縮成可一眼掃過的圖；
+> 之後規格變更時，只要改這裡對應的區塊即可持續迭代。
+>
+> **2026-04 v2 重新對齊**：取消 MQTT / OPC-UA / Knowledge Copilot；
+> SPC 改為 Kafka → .NET SignalR 即時推播；新增 4 個 SignalR Hub；
+> 新增 Domain Profile 機制（pcb / semiconductor 同 codebase 切換）。
 
 ---
 
 ## 1. 系統脈絡（誰跟誰說話）
 
-> 2026-04-24 更新：加入 Kafka 事件串流層、RabbitMQ 業務路由層、InfluxDB 時序儲存，對齊 HTML 架構設計圖。  
-> **為什麼這樣設計**：本專案取消 MQTT（不保留 Mosquitto / Bridge）。OT 設備資料以 **Kafka（事件流）/ RabbitMQ（業務路由）** 作為傳輸協議，讓 IT 系統具備可重播、可多消費者 fan-out 的能力；RabbitMQ 再做業務事件分級路由，讓「告警通知」與「工單觸發」職責分離、互不干擾。
-
 ```mermaid
 flowchart TB
-  subgraph OT["OT 設備層"]
-    MA["🏭 AOI Machine A\nKafka/RabbitMQ Client"]
-    MB["🏭 AOI Machine B\nKafka/RabbitMQ Client"]
-    PLC["🔧 PLC / SCADA\nKafka/RabbitMQ Client"]
+  subgraph OT["OT 設備層（模擬）"]
+    SIM["🏭 ingestion（Python）<br/>SPI / SMT / REFLOW / AOI / ICT / FQC<br/>SIM_SCENARIO=normal/drift/spike/misjudge"]
   end
 
-  subgraph Stream["事件串流層（新增）"]
-    KAFKA["⚡ Kafka Broker\nKRaft mode · single node"]
+  subgraph Stream["事件串流層"]
+    KAFKA["⚡ Kafka（KRaft）"]
     T1["topic: aoi.inspection.raw"]
     T2["topic: aoi.defect.event"]
     KAFKA --> T1
     KAFKA --> T2
   end
 
-  subgraph Workers["IT 應用層（新增）"]
-    CGA["Consumer Group A\nInfluxDB Writer（Python）"]
-    CGB["Consumer Group B\nRabbitMQ Publisher（Python）"]
-    CGC["Consumer Group C\nDB Writer（Python）"]
-    RMQ["🐇 RabbitMQ\nAMQP · Exchange 路由"]
-    YIELD["📈 良率統計 Worker\nPython / FastAPI"]
+  subgraph PyWorkers["Python Workers（落地）"]
+    INF_W["kafka-influx-writer"]
+    RMQ_PUB["kafka-rabbitmq-publisher"]
+  end
+
+  subgraph DotnetWorkers[".NET Workers（推前端）"]
+    SPC_W["SpcRealtimeWorker<br/>(Kafka consumer)"]
+    AL_W["AlarmRabbitWorker<br/>(RabbitMQ consumer)"]
+    WO_W["WorkorderRabbitWorker<br/>(RabbitMQ consumer)"]
+  end
+
+  subgraph Bus["業務路由層"]
+    RMQ["🐇 RabbitMQ"]
+    QA["queue: alert"]
+    QW["queue: workorder"]
+    RMQ --> QA
+    RMQ --> QW
   end
 
   subgraph Storage["儲存層"]
-    INFLUX[("📉 InfluxDB\n時序：機台心跳 · 良率趨勢")]
-    PG[("🗄️ PostgreSQL\n業務：工單 · 異常記錄")]
+    INFLUX[("📉 InfluxDB<br/>tool_metrics / yield_trend")]
+    PG[("🗄️ PostgreSQL<br/>lots / wafers / alarms / workorders<br/>material_lots / panel_station_log ...")]
   end
 
-  subgraph API["API 層"]
-    DOTNET["⚙️ ASP.NET Core API\nREST · 業務邏輯"]
-    FASTAPI["🔌 FastAPI\n分析 / ML / Copilot"]
+  subgraph DOTNET["⚙️ ASP.NET Core 8（唯一前端入口）"]
+    REST["REST API<br/>/api/lots /alarms /workorders<br/>/api/trace/* /api/meta/profile"]
+    HUB_SPC["SignalR /hubs/spc"]
+    HUB_AL["SignalR /hubs/alarm"]
+    HUB_WO["SignalR /hubs/workorder"]
   end
 
-  subgraph FE["前端層"]
-    UI["🖥️ React TypeScript\n即時監控儀表板"]
-    U["👤 Engineer / Operator"]
+  subgraph SPCSVC["📊 Python spc-service（FastAPI 8001）"]
+    SPC_BATCH["批次 / 歷史 SPC 報表<br/>Cpk · Pareto"]
   end
 
-  MA -->|Kafka publish| KAFKA
-  MB -->|Kafka publish| KAFKA
-  PLC -->|Kafka publish| KAFKA
-  T1 --> CGA
-  T1 --> CGB
-  T1 --> CGC
-  T2 --> CGB
-  CGA -->|寫時序| INFLUX
-  CGB -->|publish event| RMQ
-  CGC -->|寫業務資料| PG
-  RMQ -->|Queue: alert| PG
-  RMQ -->|Queue: workorder| PG
-  YIELD --> PG
-  INFLUX -->|REST / Flux| DOTNET
-  PG -->|讀寫| DOTNET
-  PG -->|讀| FASTAPI
-  DOTNET -->|REST API / WebSocket| UI
-  FASTAPI -->|REST API| UI
-  U --> UI
+  FE["🖥️ React + SignalR<br/>SPC / 工單 / 異常 / 物料追溯"]
+
+  SIM -->|Kafka publish| KAFKA
+  T1 --> INF_W
+  T1 --> RMQ_PUB
+  T2 --> RMQ_PUB
+  T1 --> SPC_W
+  RMQ_PUB --> RMQ
+  QA --> AL_W
+  QW --> WO_W
+
+  INF_W --> INFLUX
+  AL_W --> PG
+  WO_W --> PG
+
+  PG --> REST
+  INFLUX --> REST
+
+  SPC_W --> HUB_SPC
+  AL_W --> HUB_AL
+  WO_W --> HUB_WO
+
+  REST --> FE
+  HUB_SPC -->|WebSocket| FE
+  HUB_AL  -->|WebSocket| FE
+  HUB_WO  -->|WebSocket| FE
+  FE -->|REST 批次| SPC_BATCH
 ```
+
+> 規則：
+> - Kafka = 設備層 fan-out（多 consumer group 並行、可 replay）
+> - RabbitMQ = 業務層分級路由 + ack（告警必處理 / 工單必建立）
+> - **.NET 是前端唯一 SignalR push 入口**，Python 只負責落地（時序 / 業務寫入）
 
 ---
 
-## 2. Repo 目錄與後端分層（對齊 `structrure.md`）
+## 2. Repo 目錄與後端分層
 
 ```mermaid
 flowchart LR
@@ -80,25 +104,28 @@ flowchart LR
     F[frontend/]
     B[backend/]
     S[services/]
+    SH[shared/]
     I[infra/]
     D[docs/]
-    X[scripts/]
   end
 
   subgraph Backend["backend/src/"]
-    Api[Api]
-    App[Application]
-    Dom[Domain]
-    Inf[Infrastructure]
-    TS[Infrastructure/TimeSeries]
+    Api[Api<br/>Controllers / Hubs / Realtime]
+    App[Application<br/>Domain / Spc / Hubs / Workers / Messaging]
+    Dom[Domain/Entities]
+    Inf[Infrastructure<br/>Data / Messaging / Workers]
   end
 
   subgraph Services["services/"]
-    SIM[data-simulator/\nproducer.py（Kafka/RabbitMQ）]
-    CGA_S[kafka-consumer/\ninflux-writer/]
-    CGB_S[kafka-consumer/\nrabbitmq-publisher/]
-    CGC_S[kafka-consumer/\ndb-writer/]
-    SPC[spc-service/]
+    SIM[ingestion/]
+    INF_S[kafka-consumers/influx-writer/]
+    PUB_S[kafka-consumers/rabbitmq-publisher/]
+    SPC_S[spc-service/  ← 批次 / 歷史]
+    LEG[rabbitmq-consumers/db-sink/  ← legacy profile]
+  end
+
+  subgraph Shared["shared/"]
+    DP[domain-profiles/<br/>pcb.json / semiconductor.json]
   end
 
   B --> Backend
@@ -106,121 +133,91 @@ flowchart LR
   App --> Dom
   Inf --> Dom
   Api --> Inf
-  TS --> Inf
   S --> Services
+  SH --> Shared
 ```
 
-**依賴方向（初學者記這句就好）**：`Api` 組裝一切；`Application` 寫用例流程；`Domain` 放業務模型與規則；`Infrastructure` 實作 DB、外部服務。**內層（Domain）不依賴外層**。
+依賴方向：`Api` 組裝一切；`Application` 寫用例與業務流程（不依賴 `Infrastructure`）；
+`Domain` 放純資料模型；`Infrastructure` 實作 DB / Kafka / RabbitMQ。
 
 ---
 
-## 3. 主要資料流：OT 設備 → Kafka → 各消費者（新版）
-
-> **為什麼改成這張圖**：原本「Simulator 直接寫 DB」的流程太簡單，無法反映真實工廠的 OT→IT 整合場景。加入 Kafka 後，你可以在履歷上說「設計過 Kafka → 多消費者 fan-out 架構」，這是相當有說服力的設計經驗。
+## 3. SPC 即時推播 sequence
 
 ```mermaid
 sequenceDiagram
   autonumber
-  participant SIM as Data Simulator（Python）
-  participant KAFKA as Kafka Broker
-  participant CGA as Consumer A（InfluxDB Writer）
-  participant CGB as Consumer B（RabbitMQ Publisher）
-  participant CGC as Consumer C（DB Writer）
-  participant RMQ as RabbitMQ
-  participant INFLUX as InfluxDB
-  participant PG as PostgreSQL
-  participant API as ASP.NET Core API
-  participant UI as React 前端
+  participant ING as ingestion (Python)
+  participant K as Kafka aoi.inspection.raw
+  participant SW as .NET SpcRealtimeWorker
+  participant H as SpcHub (SignalR)
+  participant FE as React SPC Dashboard
 
-  Note over SIM: 模擬 AOI Machine：<br/>正常 / 異常 / 漂移 / 誤判情境
-  SIM->>KAFKA: Kafka publish（topic: aoi.inspection.raw / aoi.defect.event）
-  Note over KAFKA: topic: aoi.inspection.raw<br/>topic: aoi.defect.event
-
-  par Consumer Fan-out
-    KAFKA->>CGA: Consumer Group A
-    CGA->>INFLUX: 寫 tool_metrics / yield_trend（時序）
-  and
-    KAFKA->>CGB: Consumer Group B
-    CGB->>RMQ: publish 異常事件
-    RMQ->>PG: Queue alert → 寫 alarms
-    RMQ->>PG: Queue workorder → 寫 workorders
-  and
-    KAFKA->>CGC: Consumer Group C
-    CGC->>PG: 寫 process_runs / defects（業務）
+  ING->>K: publish(line, machine, parameter, value)
+  K->>SW: consume(group=aoiops-spc-realtime)
+  SW->>SW: 套八大規則 + 算 Cpk(滑動視窗 N=25)
+  alt 無違規
+    SW->>H: Clients.Group("line:SMT-A|param:solder_thickness").SendAsync("spcPoint", payload)
+  else 有違規
+    SW->>H: SendAsync("spcPoint", payload)
+    SW->>H: SendAsync("spcViolation", payload)
   end
-
-  UI->>API: GET 查詢（dashboard / review / 趨勢）
-  API->>PG: 讀取彙總與明細
-  API->>INFLUX: 讀取趨勢（Flux query）
-  PG-->>API: 結果集
-  INFLUX-->>API: 時序資料
-  API-->>UI: JSON 回應
+  H-->>FE: WebSocket 推送
+  FE->>FE: append 一點，違規高亮 + 違規表新增一行
 ```
 
 ---
 
-## 4. 資料流：文件上傳與 Copilot 問答
+## 4. 業務事件 sequence（異常 / 工單）
 
 ```mermaid
 sequenceDiagram
   autonumber
-  participant UI as React 前端
-  participant API as ASP.NET Core API（可選：metadata）
-  participant COP as AI Copilot（Python / FastAPI）
+  participant K as Kafka aoi.defect.event
+  participant PUB as Python rabbitmq-publisher
+  participant Q as RabbitMQ
+  participant W as .NET Worker（AlarmRabbitWorker / WorkorderRabbitWorker）
   participant PG as PostgreSQL
-  participant FS as 物件儲存/檔案路徑（規劃）
+  participant H as SignalR Hub
+  participant FE as React 前端
 
-  UI->>COP: 上傳 SOP / recipe / 異常手冊
-  COP->>COP: 切塊 · embedding · 索引
-  COP->>PG: 寫入 documents · document_chunks（與 ERD 一致）
-  UI->>COP: 問答（可帶 defect_id / alarm_id context）
-  COP->>PG: 檢索 chunks · 關聯 copilot_queries 紀錄
-  COP-->>UI: 回答 + 來源引用（source_refs）
-  opt 平台統一帳號與稽核
-    UI->>API: 登入 / 權限檢查
-    API-->>UI: Token / 角色
-  end
+  K->>PUB: defect event（severity=high/critical）
+  PUB->>Q: publish queue=alert / workorder
+  Q->>W: deliver（manual ack）
+  W->>PG: INSERT alarms / workorders
+  W->>H: PushAsync(payload)
+  H-->>FE: /hubs/alarm 或 /hubs/workorder
+  FE->>FE: 列表頂端新增一行（高亮 1.5s）
+  W-->>Q: ack
 ```
 
 ---
 
-## 5. 功能模組與資料領域（鳥瞰）
+## 5. 物料追溯查詢
 
 ```mermaid
-mindmap
-  root((AOI Ops Platform))
-    OT 接收層
-      Kafka 事件串流
-      RabbitMQ 業務路由
-    Defect Review
-      影像與 metadata
-      True / False 標記
-      分類與 review history
-      相似案例查詢
-    Fab Monitoring
-      Tool / Lot / Wafer / Recipe
-      Yield · Defect · Alarm 趨勢
-      InfluxDB 時序儀表板
-      異常查詢與報表
-    業務路由層
-      RabbitMQ Exchange
-      Queue alert（告警通知）
-      Queue workorder（工單觸發）
-    Knowledge Copilot
-      文件上傳與索引
-      搜尋與問答附來源
-      Defect/Alarm 情境建議
-    Data Simulation
-      Kafka/RabbitMQ 假資料發送
-      正常/異常/漂移/誤判
-      定時模擬機台心跳
+sequenceDiagram
+  autonumber
+  participant FE as React Traceability
+  participant API as TraceController
+  participant PG as PostgreSQL
+
+  FE->>API: GET /api/trace/panels/recent?take=20
+  API->>PG: SELECT recent wafers (with panel_no)
+  PG-->>API: list
+  API-->>FE: RelatedPanelDto[]
+  FE->>API: GET /api/trace/panel/{panelNo}
+  API->>PG: 1) wafers + lots
+  API->>PG: 2) panel_station_log（6 站時間軸）
+  API->>PG: 3) panel_material_usage join material_lots
+  API->>PG: 4) 同 lot / 同物料的 related panels
+  PG-->>API: 4 段資料
+  API-->>FE: PanelTraceDto
 ```
 
 ---
 
-## 6. 實體關係（ERD，PostgreSQL 部分，對齊 `ERD.md`）
-
-表名採 Mermaid `erDiagram` 慣例（大寫節點名僅為可讀性；實際 DB 命名以 migration 為準）。
+## 6. ERD（PostgreSQL 部分，對齊 `ERD.md`）
 
 ```mermaid
 erDiagram
@@ -236,19 +233,20 @@ erDiagram
   WAFERS ||--o{ DEFECTS : "wafer_id"
   DEFECTS ||--o{ DEFECT_IMAGES : "defect_id"
   DEFECTS ||--o{ DEFECT_REVIEWS : "defect_id"
-  DOCUMENTS ||--o{ DOCUMENT_CHUNKS : "document_id"
   LOTS ||--o{ WORKORDERS : "lot_id"
 
-  COPILOT_QUERIES }o--o| ALARMS : "related_alarm_id"
-  COPILOT_QUERIES }o--o| DEFECTS : "related_defect_id"
+  WAFERS ||--o{ PANEL_STATION_LOG : "panel_id"
+  WAFERS ||--o{ PANEL_MATERIAL_USAGE : "panel_id"
+  MATERIAL_LOTS ||--o{ PANEL_MATERIAL_USAGE : "material_lot_id"
 ```
 
-> **新增**：`WORKORDERS` 表承接 RabbitMQ `workorder` queue 的業務事件。`ALARMS.source` 欄位新增 `kafka` 來源識別，`DEFECTS.kafka_event_id` 對應 Kafka offset 追溯。
+> W08 新增三張表：`MATERIAL_LOTS` / `PANEL_MATERIAL_USAGE` / `PANEL_STATION_LOG`，
+> `WAFERS` 加 `panel_no varchar UNIQUE`（對外可讀識別，例：`PCB-20240422-LOT-001-1`）。
+>
+> `DOCUMENTS` / `DOCUMENT_CHUNKS` / `COPILOT_QUERIES` 為舊版殘留，標 deprecated，未來會移除。
 
 ---
 
 ## 7. 變更紀錄
 
-> 詳見根目錄 `log.md`（此 repo 習慣把 changelog 集中在一個檔案，避免每份文件都各寫一份而漂移）。
-
-
+> 詳見根目錄 `log.md`。

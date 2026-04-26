@@ -1,7 +1,13 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <!-- 為什麼 Infrastructure 要參考 Application：
+         W07 起 Infrastructure 內部的 RabbitMQ Worker（AlarmRabbitWorker / WorkorderRabbitWorker）
+         需要實作 Application 層定義的 IRabbitMessageHandler、IHubBroker 等介面，
+         並寫入 IRealtimeMetrics（W11 觀測），所以維持「Infrastructure 依賴 Application」這條向內的方向。
+         Application 仍只依賴 Domain，沒有反向相依。 -->
     <ProjectReference Include="..\Domain\AOIOpsPlatform.Domain.csproj" />
+    <ProjectReference Include="..\Application\AOIOpsPlatform.Application.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -9,7 +15,15 @@
     <!-- Npgsql 8.0.11 是 8.x 系列的最新版本（8.0.13 不存在，會被 NuGet 跳升到 9.x 造成衝突）-->
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.13" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="8.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="8.0.0" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.11" />
+    <!-- W04 新增：Kafka / RabbitMQ 用 client SDK -->
+    <!-- 為什麼選 Confluent.Kafka 2.x：與 Apache Kafka 3.x broker 相容，且是 .NET 圈最常用的 Kafka client -->
+    <!-- 為什麼選 RabbitMQ.Client 6.x：6.x 是 .NET 8 上最穩定的 LTS 版本，避免與 7.x 預覽 API 變動 -->
+    <PackageReference Include="Confluent.Kafka" Version="2.5.3" />
+    <PackageReference Include="RabbitMQ.Client" Version="6.8.1" />
   </ItemGroup>
 
   <PropertyGroup>

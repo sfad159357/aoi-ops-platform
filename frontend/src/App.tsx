@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 import SpcDashboard from './pages/SpcDashboard'
+import AlarmsPage from './pages/AlarmsPage'
+import WorkordersPage from './pages/WorkordersPage'
+import TraceabilityPage from './pages/TraceabilityPage'
+import RealtimeStatusBadge from './realtime/RealtimeStatusBadge'
+import { useProfile } from './domain/useProfile'
 
 type DbHealthResponse = {
   canConnect: boolean
@@ -67,7 +72,11 @@ type DefectDetail = {
 }
 
 // 頁面類型（使用簡單 state 切換，不引入 router 以保持最小依賴）
-type PageId = 'health' | 'spc'
+//
+// 為什麼把 alarm / wo / trace 都放進來：
+// - 對齊 4 大選單：SPC / 工單 / 異常 / 物料追溯；
+//   仍維持單一 state，沒有 router 的學習成本。
+type PageId = 'health' | 'spc' | 'alarm' | 'wo' | 'trace'
 
 /**
  * App（前端導覽外殼）
@@ -81,6 +90,7 @@ type PageId = 'health' | 'spc'
  */
 function App() {
   const [page, setPage] = useState<PageId>('health')
+  const { profile } = useProfile()
   const apiBaseUrl = useMemo(() => {
     // 為什麼從 env 讀：
     // - 本機開發、Docker container、未來部署的後端網址可能不同，用環境變數切換最安全也最不容易搞混。
@@ -268,10 +278,18 @@ function App() {
         top: 0,
         zIndex: 100,
       }}>
-        <span style={{ color: '#60a5fa', fontWeight: 700, fontSize: 14 }}>AOI Ops Platform</span>
+        <span style={{ color: '#60a5fa', fontWeight: 700, fontSize: 14 }}>
+          {profile.displayName || 'AOI Ops Platform'}
+        </span>
         {([
           { id: 'health', label: '系統狀態 / API 驗收' },
-          { id: 'spc',    label: '📊 SPC 統計製程管制' },
+          // 為什麼把 SPC / Alarm / Workorder 的標籤從 profile 取：
+          // - profile.menus 由 domain profile JSON 提供，
+          //   切到 semiconductor profile 時，UI 文案會自動跟著換。
+          { id: 'spc',    label: profile.menus.find((m) => m.id === 'spc')?.labelZh ?? 'SPC 統計製程管制' },
+          { id: 'alarm',  label: profile.menus.find((m) => m.id === 'alarm')?.labelZh ?? '異常記錄' },
+          { id: 'wo',     label: profile.menus.find((m) => m.id === 'wo')?.labelZh ?? '工單管理' },
+          { id: 'trace',  label: profile.menus.find((m) => m.id === 'trace')?.labelZh ?? '物料追溯查詢' },
         ] as { id: PageId; label: string }[]).map((nav) => (
           <button
             key={nav.id}
@@ -291,12 +309,30 @@ function App() {
             {nav.label}
           </button>
         ))}
+        <RealtimeStatusBadge hub="spc" />
       </nav>
 
       {/* SPC Dashboard 頁面 */}
       {page === 'spc' && (
         <div style={{ background: '#0d1117', minHeight: 'calc(100vh - 48px)' }}>
           <SpcDashboard />
+        </div>
+      )}
+
+      {/* 異常記錄 / 工單管理：W07 新增 */}
+      {page === 'alarm' && (
+        <div style={{ background: '#0d1117', minHeight: 'calc(100vh - 48px)' }}>
+          <AlarmsPage />
+        </div>
+      )}
+      {page === 'wo' && (
+        <div style={{ background: '#0d1117', minHeight: 'calc(100vh - 48px)' }}>
+          <WorkordersPage />
+        </div>
+      )}
+      {page === 'trace' && (
+        <div style={{ background: '#0d1117', minHeight: 'calc(100vh - 48px)' }}>
+          <TraceabilityPage />
         </div>
       )}
 

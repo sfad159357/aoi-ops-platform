@@ -1,208 +1,152 @@
-## AOI Ops Platform（MVP）
+# AOI Ops Platform
 
-模擬高科技製造場景的生產資訊系統，
-涵蓋設備數據收集（Kafka / RabbitMQ）、製程監控、缺陷管理、業務事件路由（RabbitMQ），並以 **SPC（統計製程管制）** 製作製程監控圖表與異常趨勢偵測。
+PCB SMT 產線 MES 品質模組：以 **Kafka 即時推播 + .NET Core SignalR** 為骨幹，
+即時計算 SPC 八大規則 / Cpk，並以事件驅動方式串接 **工單管理 / 異常記錄 / 物料追溯查詢**。
 
-用 **.NET（分層架構）+ Kafka + RabbitMQ + PostgreSQL + InfluxDB + Python（SPC Service）** 模擬 OT/IT 融合的 MES/AOI 場景，展示「企業後端設計 + 事件驅動架構 + 資料建模 + 可容器化落地」能力。
+主軸：**即時生產 → 儲存 → 消費 → API 回傳 → 即時監控 → 即時運算 → 業務模組 → 可追溯查表**。
+
+> 同一份 codebase 透過 Domain Profile 機制，可在 **PCB / 半導體** 兩種產業 demo 之間切換用語與規格，
+> 不需改 schema，也不需改前端文案。詳見 [docs/domain-profile.md](docs/domain-profile.md)。
 
 ---
 
-### 系統架構（OT/IT 融合）
+## 一、四大功能模組
+
+| 模組 | 來源 | 推送機制 | 對應前端頁面 |
+|---|---|---|---|
+| ① **SPC 統計製程管制** | Kafka `aoi.inspection.raw` | SignalR `/hubs/spc`（spcPoint / spcViolation） | `SpcDashboard` |
+| ② **工單管理** | RabbitMQ `workorder` | SignalR `/hubs/workorder` + REST 預載 | `WorkordersPage` |
+| ③ **異常記錄** | RabbitMQ `alert`（由 Kafka `aoi.defect.event` 路由而來） | SignalR `/hubs/alarm` + REST 預載 | `AlarmsPage` |
+| ④ **物料追溯查詢** | PostgreSQL（panel_no / 物料批號 / 同 lot） | REST `GET /api/trace/panel/{panelNo}` | `TraceabilityPage` |
+
+---
+
+## 二、技術棧
+
+| 層級 | 技術 | 用途 |
+|---|---|---|
+| 前端 | React 19 + TypeScript + Vite + recharts | 4 大模組儀表板，連 SignalR 收推播 |
+| 後端 | ASP.NET Core 8（Api / Application / Domain / Infrastructure） | REST API、SignalR Hub、Kafka / RabbitMQ consumer |
+| 即時推送 | **.NET Core SignalR**（WebSocket，自動降級 SSE / Long Polling） | 4 個 Hub：spc / alarm / workorder / trace |
+| 事件串流 | Apache Kafka 3.x（KRaft mode） | 設備感測層 fan-out |
+| 業務路由 | RabbitMQ 3 + AMQP | alert / workorder 業務佇列 |
+| 結構化資料庫 | PostgreSQL 16 | 業務資料、SPC 計算來源、物料追溯 |
+| 時序資料庫 | InfluxDB 2.7 | 機台心跳、良率趨勢 |
+| Python 服務 | FastAPI（SPC 報表）/ ingestion / kafka-influx-writer / kafka-rabbitmq-publisher | 模擬器、Kafka 消費端、批次 SPC 報表 |
+| 容器化 | Docker Compose | 一鍵啟動 |
+
+> **不做**：MQTT / Mosquitto / OPC-UA / 機器學習 / RAG / Knowledge Copilot。
+> 這些功能在 v2 重新對齊時被移除，定位回到「真實 MES 品質模組」。
+
+---
+
+## 三、即時資料流
 
 ```
-🏭 AOI Machine / PLC / SCADA
-   ▼
-⚡ Kafka Broker（事件串流骨幹，KRaft mode）
-   │  topic: aoi.inspection.raw
-   │  topic: aoi.defect.event
-   ├─── Consumer Group A ──▶ 📉 InfluxDB（時序：心跳 / 良率趨勢）
-   ├─── Consumer Group B ──▶ 🐇 RabbitMQ（業務路由）
-   │                             ├─ Queue: alert   ──▶ PostgreSQL alarms
-   │                             └─ Queue: workorder ▶ PostgreSQL workorders
-   └─── Consumer Group C ──▶ 🗄️ PostgreSQL（business：lot/wafer/defect）
-                  ▲
-   ⚙️ ASP.NET Core API（REST / WebSocket）
-   🔌 FastAPI（SPC 計算服務）
-                  ▼
-   🖥️ React TypeScript（即時監控儀表板）
+🏭 ingestion（Python，模擬 AOI 設備）
+   │
+   ▼ Kafka publish
+⚡ Kafka（aoi.inspection.raw / aoi.defect.event）
+   │
+   ├─▶ Python kafka-influx-writer        ──▶ InfluxDB（時序）
+   ├─▶ Python kafka-rabbitmq-publisher   ──▶ RabbitMQ（alert / workorder）
+   ├─▶ .NET SpcRealtimeWorker（SignalR） ──▶ /hubs/spc（spcPoint / spcViolation）
+   └─▶ .NET DefectRealtimeWorker（規劃）
+
+🐇 RabbitMQ
+   ├─ alert     ─▶ .NET AlarmRabbitWorker     ──▶ PostgreSQL alarms     + /hubs/alarm
+   └─ workorder ─▶ .NET WorkorderRabbitWorker ──▶ PostgreSQL workorders + /hubs/workorder
+
+🗄️ PostgreSQL ─▶ ASP.NET Core API（REST：/api/lots / alarms / workorders / trace ...）
+                                       ─▶ /hubs/* SignalR 推播（事件驅動）
+                                            ─▶ React 前端 4 大頁
 ```
 
----
-
-### 系統定位
-
-本專案模擬真實 MES/AOI 架構：
-
-- `ingestion`（單一容器）透過 **Kafka** 模擬設備發送製造數據，並同時消費後落地 PostgreSQL（MVP 先求端到端打通）
-- Kafka 讓多個消費者（InfluxDB Writer、RabbitMQ Publisher、DB Writer）**各自獨立消費同一份資料流**
-- **RabbitMQ** 做業務事件分級路由：`alert` queue 觸發告警記錄，`workorder` queue 觸發工單建立
-- **ASP.NET Core API** 整合讀取 PostgreSQL + InfluxDB，提供 REST API
-- **React 前端**即時呈現 dashboard、告警、缺陷清單
-- **PostgreSQL 開發環境一鍵啟動**：`docker compose up` 直接起 DB，並支援 init script
-- **EF Core 資料模型已對齊 ERD**：`AoiOpsDbContext` 使用 Fluent API 管理 table/column/index
-- **可快速驗證 DB 連線**：`GET /api/health/db` 回傳 `canConnect` 與 `toolsTableExists`
+詳細 sequence 圖見 [graph.md](graph.md)；SignalR 訊息格式見 [docs/realtime-signalr.md](docs/realtime-signalr.md)。
 
 ---
 
-### 技術棧
+## 四、Quick Start
 
-
-| 層級          | 技術                        | 說明                          |
-| ----------- | ------------------------- | --------------------------- |
-| 前端          | React、TypeScript、Vite     | 即時監控儀表板                     |
-| 後端          | C# / ASP.NET Core Web API | 主業務邏輯、REST API              |
-| 事件串流        | **Kafka（KRaft mode）**     | OT→IT 事件骨幹（新增）              |
-| 業務路由        | **RabbitMQ（AMQP）**        | alert / workorder queue（新增） |
-| 結構化資料庫      | PostgreSQL                | 業務資料、工單、異常記錄                |
-| 時序資料庫       | InfluxDB                  | 機台心跳、良率趨勢                   |
-| 視覺化         | Grafana                   | InfluxDB 時序儀表板（規劃）          |
-| Python 服務   | FastAPI、psycopg、numpy     | SPC 計算服務、消費者 Workers         |
-| 容器化         | Docker Compose            | 全服務一鍵啟動                     |
-
-
----
-
-### 功能模組
-
-- **Defect Review**：匯入缺陷資料/影像、標記 True/False、Review history、相似案例查詢
-- **Fab Monitoring**：tool/lot/wafer dashboard、yield/alarm/defect trend、異常查詢
-- **SPC 統計製程管制（新增）**：Xbar-R/I-MR/P/C 管制圖、八大規則偵測、Ca/Cp/Cpk 製程能力
-- **事件驅動告警**：Kafka → RabbitMQ alert queue → 自動寫入告警記錄
-
----
-
-### 資料流
-
-```
-ingestion（Producer + Kafka→DB writer）
-  → Kafka publish（aoi.inspection.raw）
-  → ingestion consumer group → PostgreSQL（process_runs）
-  → spc-service Live API（讀 DB 計算 SPC）
-  → React SPC Dashboard（Live 模式）
-```
-
----
-
-### Repo 結構
-
-- `frontend/`：React + TypeScript（Vite）
-- `backend/`：ASP.NET Core Web API（Api / Application / Domain / Infrastructure）
-- `services/`：Python（`ingestion` / `spc-service`）
-  - `ingestion/`：單一容器（Producer + Kafka Consumer + PostgreSQL writer）
-  - `spc-service/`：SPC 計算服務（FastAPI，port 8001，含 Live 模式）
-- `infra/`：Docker Compose、Kafka、RabbitMQ、InfluxDB、DB migrations
-- `docs/`：架構、ERD、API spec、Kafka / RabbitMQ 資料流、事件格式
-
----
-
-### Quick Start
+最常用 4 個指令（封裝在 `Makefile`，避免每個人記 docker compose 不同變體）：
 
 ```bash
+make up               # 啟動所有容器（PCB profile）
+make smoke            # 打幾個關鍵 API 確認骨架活著
+make profile-semiconductor   # 切到半導體 profile（重啟 backend / frontend）
+make down             # 關掉
+make seed             # 砍掉 DB volume，重新 seed 一次乾淨資料
+```
+
+不想用 make 也可以直接打：
+
+```bash
+# 預設 PCB profile
 docker compose -p aoiops -f infra/docker/docker-compose.yml up -d
+
+# 切半導體 profile
+DOMAIN_PROFILE=semiconductor \
+  docker compose -p aoiops -f infra/docker/docker-compose.yml up -d --force-recreate backend frontend
 ```
 
-- **DB 健康檢查**：啟動後打 `GET /api/health/db`
-- **前端**：`http://localhost:5173`（含 SPC Dashboard）
-- **後端 API**：`http://localhost:8080`
-- **SPC Service**：`http://localhost:8001`（FastAPI Docs：`/docs`）
-- **Kafka**：`localhost:9092`（開發用）
-- **RabbitMQ 管理介面**：`http://localhost:15672`（預設帳密 guest/guest）
-- **InfluxDB UI**：`http://localhost:8086`
+啟動後可使用：
 
-> **常見啟動衝突（很重要）**  
-> - 如果你本機已經有跑 `npm run dev`（佔用 `5173`），請不要用 Docker 再起 `frontend`，否則會看到 `Bind for 0.0.0.0:5173 failed: port is already allocated`。  
-> - 如果你已經有另一套 RabbitMQ（佔用 `5672`），再起第二套會看到 `Bind for 0.0.0.0:5672 failed: port is already allocated`。  
-> - 建議一律用 `-p aoiops`，避免不同 compose 專案名稱互相佔 port。
+- 前端：<http://localhost:5173>
+- 後端 API：<http://localhost:8080>（Swagger：`/swagger`）
+- SPC 報表服務：<http://localhost:8001>（Python FastAPI，批次 / 歷史用）
+- Kafka：`localhost:9092`
+- RabbitMQ 管理介面：<http://localhost:15672>（guest / guest）
+- InfluxDB UI：<http://localhost:8086>
 
-> **為什麼有時候你會看到 backend/spc-service 沒起來？**  
-> 這次遇到的狀況是：同一台機器上先前有其他 compose 專案（例如 `docker-*`）佔住 `8080/8001/5173/5672`，導致部分服務在「第一次 up」時沒有成功建立/綁定；後續再跑 `up -d backend spc-service` 時，compose 可能會判定容器已存在但狀態不完整，所以用 `--force-recreate` 重新建立一次最穩。
-
----
-
-### 啟動指令整合（推薦照抄）
-
-#### A) 全部都用 Docker（前端 + 後端 + SPC + ingestion 全包）
+`make smoke` 等同：
 
 ```bash
-cd /Users/apple/Documents/aoi-ops-platform
-docker compose -p aoiops -f infra/docker/docker-compose.yml up -d
-```
-
-#### B) 本機跑前端（`npm run dev`），其他用 Docker（避免 5173 衝突）
-
-```bash
-cd /Users/apple/Documents/aoi-ops-platform
-docker compose -p aoiops -f infra/docker/docker-compose.yml up -d \
-  db backend kafka rabbitmq influxdb spc-service ingestion
-```
-
-#### C) 如果 backend / spc-service 沒綁到 port（最穩補救）
-
-```bash
-docker compose -p aoiops -f infra/docker/docker-compose.yml up -d --force-recreate backend spc-service
-```
-
----
-
-### 開發者操作手冊（啟動 / 驗收 / 測試）
-
-> **寫給新手的原則**：先把「端到端能動」驗收過，再去做更複雜的功能（consumer、趨勢圖、review flow）。
-
-#### 1) 啟動（只跑 W01/W02 需要的服務）
-
-> 如果你在某些環境遇到 `Cannot connect to the Docker daemon`，請改用 `DOCKER_HOST=unix:///var/run/docker.sock`（原因見 `docs/debug-notes.md`）。
-
-```bash
-# 只起 W02 基礎：DB + API + 前端 + Kafka/RabbitMQ/InfluxDB（全用 Docker）
-DOCKER_HOST=unix:///var/run/docker.sock docker compose -f infra/docker/docker-compose.yml up -d \
-  db backend frontend kafka rabbitmq influxdb
-
-# 如果你本機已有 `npm run dev`（推薦）：Docker 不再啟動 frontend（避免 5173 衝突）
-DOCKER_HOST=unix:///var/run/docker.sock docker compose -f infra/docker/docker-compose.yml up -d \
-  db backend kafka rabbitmq influxdb
-```
-
-#### 2) 驗收（Smoke Test，照抄即可）
-
-```bash
-# Health（後端是否能連 DB、schema 是否存在）
 curl -s http://localhost:8080/api/health/db; echo
-
-# Lots list（W02 第一支 list API）
-curl -s http://localhost:8080/api/lots | head -c 500; echo
-
-# RabbitMQ 管理頁（應回 200）
-curl -s -o /dev/null -w "RabbitMQ HTTP:%{http_code}\n" http://localhost:15672
-
-# InfluxDB UI（應回 200）
-curl -s -o /dev/null -w "InfluxDB HTTP:%{http_code}\n" http://localhost:8086
-```
-
-#### 3) 重置 DB（只有開發時才用）
-
-> **什麼時候需要**：你改了 schema（例如把主鍵型別改成 Guid）但 DB 還是舊結構，會一直報錯。  
-> **為什麼要 -v**：Postgres 的資料存在 volume 裡，不刪 volume 就不會重新初始化。
-
-```bash
-DOCKER_HOST=unix:///var/run/docker.sock docker compose -f infra/docker/docker-compose.yml down -v
-```
-
-#### 4) 跑後端測試（xUnit）
-
-> 目前用 .NET SDK 容器跑，避免你本機沒有安裝 dotnet 也能測。
-
-```bash
-DOCKER_HOST=unix:///var/run/docker.sock docker run --rm \
-  -v "$(pwd):/src" -w /src \
-  mcr.microsoft.com/dotnet/sdk:8.0 \
-  bash -lc "dotnet test backend/tests/AOIOpsPlatform.Api.Tests/AOIOpsPlatform.Api.Tests.csproj"
+curl -s http://localhost:8080/api/meta/profile | head -c 200; echo
+curl -s http://localhost:8080/api/lots | head -c 200; echo
+curl -s http://localhost:8080/api/alarms?take=5 | head -c 200; echo
+curl -s http://localhost:8080/api/workorders?take=5 | head -c 200; echo
+curl -s "http://localhost:8080/api/trace/panels/recent?take=3"; echo
 ```
 
 ---
 
-### 文件索引（更多教學在 `docs/`）
+## 五、Repo 結構
 
-- 新手 W02 開發指南：`docs/week2-w02-guide.md`
-- 開發除錯筆記（面試可講）：`docs/debug-notes.md`
-- Troubleshooting（ingestion 沒落地 process_runs）：`docs/troubleshooting-ingestion-process-runs.md`
+```
+aoi-ops-platform/
+  frontend/             React + Vite 前端（含 SignalR client / 4 大頁）
+  backend/              ASP.NET Core 8（Api / Application / Domain / Infrastructure / tests）
+  services/             Python 服務
+    ingestion/          Kafka producer + DB writer（單一容器）
+    kafka-consumers/
+      influx-writer/    Kafka → InfluxDB（時序寫入）
+      rabbitmq-publisher/ Kafka → RabbitMQ（business 路由）
+    spc-service/        FastAPI（批次 / 歷史 SPC 報表，port 8001）
+    rabbitmq-consumers/ legacy；W07 起由 .NET 接管，docker compose 預設不啟動
+  shared/
+    domain-profiles/    pcb.json / semiconductor.json（同 schema 不同產業用語）
+  infra/
+    docker/             docker-compose.yml + healthcheck
+    db/init/            PostgreSQL 初始化 SQL
+  docs/                 architecture / realtime-signalr / domain-profile / traceability...
+  scripts/              開發用 seed / smoke / 一鍵啟動
+```
 
+詳見 [structrure.md](structrure.md)。
+
+---
+
+## 六、其他文件
+
+- **新成員第一次啟動**：[docs/getting-started.md](docs/getting-started.md)
+- **Demo 腳本（6 分鐘走完整條 PCB 產線）**：[docs/demo-script.md](docs/demo-script.md)
+- **驗收清單**：[docs/acceptance.md](docs/acceptance.md)
+- 即時推播訊息格式：[docs/realtime-signalr.md](docs/realtime-signalr.md)
+- 物料追溯資料模型：[docs/traceability.md](docs/traceability.md)
+- Domain Profile 機制：[docs/domain-profile.md](docs/domain-profile.md)
+- 觀測（Logging + Metrics + 情境演練）：[docs/observability.md](docs/observability.md)
+- 系統架構圖：[graph.md](graph.md)
+- ERD：[ERD.md](ERD.md)
+- 專案定位：[project.md](project.md)
+- 故障排查與開發筆記：[docs/](docs/)

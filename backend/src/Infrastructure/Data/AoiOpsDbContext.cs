@@ -27,6 +27,10 @@ public sealed class AoiOpsDbContext : DbContext
     public DbSet<DocumentChunk> DocumentChunks => Set<DocumentChunk>();
     public DbSet<CopilotQuery> CopilotQueries => Set<CopilotQuery>();
     public DbSet<Workorder> Workorders => Set<Workorder>();
+    // W08：物料追溯三表
+    public DbSet<MaterialLot> MaterialLots => Set<MaterialLot>();
+    public DbSet<PanelMaterialUsage> PanelMaterialUsages => Set<PanelMaterialUsage>();
+    public DbSet<PanelStationLog> PanelStationLogs => Set<PanelStationLog>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -86,6 +90,11 @@ public sealed class AoiOpsDbContext : DbContext
             b.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
             b.Property(x => x.LotId).HasColumnName("lot_id");
             b.Property(x => x.WaferNo).HasColumnName("wafer_no").HasMaxLength(50).IsRequired();
+            // 為什麼 panel_no 走 unique 但 nullable：
+            // - 既有 seed 資料沒這欄位、初期允許 null；
+            //   一旦有值就必須全廠唯一，掃 QR Code 才能精準對映。
+            b.Property(x => x.PanelNo).HasColumnName("panel_no").HasMaxLength(100);
+            b.HasIndex(x => x.PanelNo).IsUnique().HasFilter("\"panel_no\" IS NOT NULL");
             b.Property(x => x.Status).HasColumnName("status").HasMaxLength(50);
             b.Property(x => x.CreatedAt).HasColumnName("created_at");
             b.HasIndex(x => new { x.LotId, x.WaferNo }).IsUnique();
@@ -225,6 +234,53 @@ public sealed class AoiOpsDbContext : DbContext
             b.Property(x => x.SourceQueue).HasColumnName("source_queue").HasMaxLength(50).IsRequired();
             b.Property(x => x.CreatedAt).HasColumnName("created_at");
             b.HasIndex(x => x.WorkorderNo).IsUnique();
+        });
+
+        // W08：物料追溯三表
+        modelBuilder.Entity<MaterialLot>(b =>
+        {
+            b.ToTable("material_lots");
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
+            b.Property(x => x.MaterialLotNo).HasColumnName("material_lot_no").HasMaxLength(100).IsRequired();
+            b.Property(x => x.MaterialType).HasColumnName("material_type").HasMaxLength(100).IsRequired();
+            b.Property(x => x.MaterialName).HasColumnName("material_name").HasMaxLength(200);
+            b.Property(x => x.Supplier).HasColumnName("supplier").HasMaxLength(200);
+            b.Property(x => x.ReceivedAt).HasColumnName("received_at");
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.HasIndex(x => x.MaterialLotNo).IsUnique();
+            b.HasIndex(x => x.MaterialType);
+        });
+
+        modelBuilder.Entity<PanelMaterialUsage>(b =>
+        {
+            b.ToTable("panel_material_usage");
+            // 為什麼用複合主鍵：
+            // - 同板 + 同物料批號只該記一次；用主鍵防呆比 unique index 更直接。
+            b.HasKey(x => new { x.PanelId, x.MaterialLotId });
+            b.Property(x => x.PanelId).HasColumnName("panel_id");
+            b.Property(x => x.MaterialLotId).HasColumnName("material_lot_id");
+            b.Property(x => x.Quantity).HasColumnName("quantity").HasColumnType("decimal(18,4)");
+            b.Property(x => x.UsedAt).HasColumnName("used_at");
+            b.HasIndex(x => x.MaterialLotId);
+        });
+
+        modelBuilder.Entity<PanelStationLog>(b =>
+        {
+            b.ToTable("panel_station_log");
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
+            b.Property(x => x.PanelId).HasColumnName("panel_id");
+            b.Property(x => x.StationCode).HasColumnName("station_code").HasMaxLength(50).IsRequired();
+            b.Property(x => x.EnteredAt).HasColumnName("entered_at");
+            b.Property(x => x.ExitedAt).HasColumnName("exited_at");
+            b.Property(x => x.Result).HasColumnName("result").HasMaxLength(50);
+            b.Property(x => x.Operator).HasColumnName("operator").HasMaxLength(100);
+            b.Property(x => x.Note).HasColumnName("note").HasMaxLength(2000);
+            // 為什麼用 (panel_id, entered_at)：
+            // - 對單一板查時間軸是最常用 query；複合 index 同時加速「依板查歷程」與「依時間排序」。
+            b.HasIndex(x => new { x.PanelId, x.EnteredAt });
+            b.HasIndex(x => x.StationCode);
         });
     }
 }

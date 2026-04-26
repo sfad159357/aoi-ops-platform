@@ -1,3 +1,8 @@
+/* 為什麼引入 Google Fonts JetBrains Mono / Noto Sans TC：
+   - HTML 設計圖使用 JetBrains Mono 強調工程師感、Noto Sans TC 給中文字段；
+   - 用 Google Fonts CDN 啟動最簡單，不需要在 repo 內放 woff 檔。 */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;600;700&display=swap');
+
 :root {
   --text: #6b6375;
   --text-h: #08060d;
@@ -11,9 +16,9 @@
   --shadow:
     rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
 
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
+  --sans: 'Noto Sans TC', system-ui, 'Segoe UI', Roboto, sans-serif;
+  --heading: 'Noto Sans TC', system-ui, 'Segoe UI', Roboto, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
 
   font: 18px/145% var(--sans);
   letter-spacing: 0.18px;
@@ -50,12 +55,12 @@
   }
 }
 
+/* 為什麼把 #root 改成全寬：
+   - SPC Dashboard 屬於工業儀表板，需要利用整個螢幕寬度；
+   - 原本固定 1126px 的版心適合落地頁，改全寬後既有 Health 頁面只是「不再水平置中」，內容仍可讀。 */
 #root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
+  width: 100%;
+  margin: 0;
   min-height: 100svh;
   display: flex;
   flex-direction: column;

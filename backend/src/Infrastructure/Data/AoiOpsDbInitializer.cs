@@ -103,7 +103,11 @@ public static class AoiOpsDbInitializer
 
             db.Lots.AddRange(lots);
 
-            // 每個 lot 建 2 片 wafer（用 string wafer_no，先求簡單）
+            // 每個 lot 建 2 片 wafer（兼任 PCB 板）
+            //
+            // 為什麼順手填 panel_no：
+            // - W08 的物料追溯 API 用 panel_no 當入口，
+            //   seed 階段就帶上 demo 用的可讀識別碼，前端打開頁面就能查到資料。
             var wafers = lots.SelectMany(l => new[]
             {
                 new Domain.Entities.Wafer
@@ -111,6 +115,7 @@ public static class AoiOpsDbInitializer
                     Id = Guid.NewGuid(),
                     LotId = l.Id,
                     WaferNo = "1",
+                    PanelNo = $"PCB-{now:yyyyMMdd}-{l.LotNo}-1",
                     Status = "in_progress",
                     CreatedAt = now
                 },
@@ -119,6 +124,7 @@ public static class AoiOpsDbInitializer
                     Id = Guid.NewGuid(),
                     LotId = l.Id,
                     WaferNo = "2",
+                    PanelNo = $"PCB-{now:yyyyMMdd}-{l.LotNo}-2",
                     Status = "in_progress",
                     CreatedAt = now
                 }
@@ -192,6 +198,85 @@ public static class AoiOpsDbInitializer
             db.Defects.Add(defect);
             db.Alarms.Add(alarm);
             db.Workorders.Add(workorder);
+
+            // W08 seed：物料批號 + 用料 + 6 站時間軸（針對第一張板）
+            //
+            // 為什麼一定要 seed：
+            // - Traceability 頁面打開若沒有任何 panel 有 6 站歷程，UI 永遠是空白；
+            //   先給一張完整 demo 板，讓 acceptance 與面試 demo 立刻看得到效果。
+            var solder = new Domain.Entities.MaterialLot
+            {
+                Id = Guid.NewGuid(),
+                MaterialLotNo = $"SOLDER-{now:yyyyMMdd}-001",
+                MaterialType = "solder_paste",
+                MaterialName = "錫膏 SAC305",
+                Supplier = "ABC Solder Co.",
+                ReceivedAt = now.AddDays(-3),
+                CreatedAt = now,
+            };
+            var fr4 = new Domain.Entities.MaterialLot
+            {
+                Id = Guid.NewGuid(),
+                MaterialLotNo = $"FR4-{now:yyyyMMdd}-001",
+                MaterialType = "fr4",
+                MaterialName = "FR4 1.6mm",
+                Supplier = "XYZ Laminate Inc.",
+                ReceivedAt = now.AddDays(-7),
+                CreatedAt = now,
+            };
+            var capacitor = new Domain.Entities.MaterialLot
+            {
+                Id = Guid.NewGuid(),
+                MaterialLotNo = $"CAP-{now:yyyyMMdd}-001",
+                MaterialType = "capacitor",
+                MaterialName = "0402 10uF",
+                Supplier = "Capacitor Ltd.",
+                ReceivedAt = now.AddDays(-2),
+                CreatedAt = now,
+            };
+            db.MaterialLots.AddRange(solder, fr4, capacitor);
+
+            // 為什麼第一張板（firstWafer）就 seed 完整 6 站歷程：
+            // - 讓 demo / 自動測試只需挑這張板就能驗收完整 timeline。
+            var stations = new[] { "SPI", "SMT", "REFLOW", "AOI", "ICT", "FQC" };
+            for (var i = 0; i < stations.Length; i++)
+            {
+                var enteredAt = now.AddMinutes(-30 + i * 4);
+                db.PanelStationLogs.Add(new Domain.Entities.PanelStationLog
+                {
+                    Id = Guid.NewGuid(),
+                    PanelId = firstWafer.Id,
+                    StationCode = stations[i],
+                    EnteredAt = enteredAt,
+                    ExitedAt = enteredAt.AddMinutes(3),
+                    Result = i == 3 ? "warn" : "pass",
+                    Operator = i < 3 ? "OP-001" : "AOI-A",
+                    Note = i == 3 ? "AOI defect=1（DEF-0042）" : null,
+                });
+            }
+
+            db.PanelMaterialUsages.AddRange(
+                new Domain.Entities.PanelMaterialUsage
+                {
+                    PanelId = firstWafer.Id,
+                    MaterialLotId = solder.Id,
+                    Quantity = 0.85m,
+                    UsedAt = now.AddMinutes(-30),
+                },
+                new Domain.Entities.PanelMaterialUsage
+                {
+                    PanelId = firstWafer.Id,
+                    MaterialLotId = fr4.Id,
+                    Quantity = 1m,
+                    UsedAt = now.AddMinutes(-30),
+                },
+                new Domain.Entities.PanelMaterialUsage
+                {
+                    PanelId = firstWafer.Id,
+                    MaterialLotId = capacitor.Id,
+                    Quantity = 24m,
+                    UsedAt = now.AddMinutes(-26),
+                });
 
             await db.SaveChangesAsync(cancellationToken);
             logger.LogInformation("Seed completed.");

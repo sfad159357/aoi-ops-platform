@@ -1,95 +1,129 @@
 aoi-ops-platform/
   frontend/
     src/
+      api/                      ← 前端 REST 客戶端
+        spc.ts                  ← SPC 報表 API（批次 / 歷史，連 Python 8001）
+        trace.ts                ← 物料追溯 API（連 .NET /api/trace/*）
       components/
-        spc/            ← SPC 元件（新增）
-          ControlChart.tsx         ← 通用管制圖（UCL/CL/LCL + 違規高亮）
-          ProcessCapabilityCard.tsx ← Ca/Cp/Cpk 指數卡片
-          RulesViolationTable.tsx  ← 八大規則違規清單
+        spc/                    ← SPC 元件（W06 重構）
+          KpiBar.tsx            ← 4 KPI 卡（良率 / Cpk / 違規 / 產出）
+          FilterBar.tsx         ← 站別 / 機台 / 參數 filter（控 SignalR group）
+          ControlChartPair.tsx  ← X̄ + R 雙圖（recharts）
+          ViolationTable.tsx    ← 八大規則違規清單
+      domain/                   ← Domain Profile（W05）
+        profile.ts              ← TS 型別
+        useProfile.tsx          ← React Context + useProfile hook
+        fallback/pcb.json       ← 後端不可達時的離線預設
+      realtime/                 ← SignalR client（W04）
+        signalr.ts              ← createHubConnection 工廠
+        useSpcStream.ts
+        useAlarmStream.ts
+        useWorkorderStream.ts
+        RealtimeStatusBadge.tsx ← Hub 連線狀態 badge
       pages/
-        SpcDashboard.tsx  ← SPC 主頁面（新增，含 Xbar-R/I-MR/P/C 四個頁籤）
-      hooks/            ← 自訂 React hooks（useLotsApi、useDefectsApi…）
-      api/
-        spc.ts          ← SPC API 客戶端 + DEMO_* 常數（新增）
-    public/
+        SpcDashboard.tsx        ← W06：4 KPI + X̄/R + 違規表 + filter
+        AlarmsPage.tsx          ← W07：異常記錄（事件驅動）
+        WorkordersPage.tsx      ← W07：工單管理（事件驅動）
+        TraceabilityPage.tsx    ← W08：6 站時間軸 + 物料批號 + 同批次
+      App.tsx
+      main.tsx                  ← 包 ProfileProvider
     package.json
     vite.config.ts
 
-  backend/
+  backend/                      ← ASP.NET Core 8（Clean Architecture）
     src/
-      Api/              ← Controller、Middleware、Program.cs（組裝進入點）
-      Application/      ← UseCase / Service（業務流程，不依賴 DB 細節）
-      Domain/           ← Entity、ValueObject、業務規則（最純粹的一層）
+      Api/                      ← REST + SignalR 進入點
+        Controllers/
+          AlarmsController.cs       GET /api/alarms
+          WorkordersController.cs   GET /api/workorders
+          TraceController.cs        GET /api/trace/panel/{panelNo}, /api/trace/panels/recent
+          MetaController.cs         GET /api/meta/profile
+          LotsController.cs / DefectsController.cs / HealthController.cs ...
+        Hubs/                       ← SignalR Hubs（W04 / W07）
+          SpcHub.cs                 ← /hubs/spc，支援 JoinGroup(line, parameter)
+          AlarmHub.cs               ← /hubs/alarm
+          WorkorderHub.cs           ← /hubs/workorder
+        Realtime/
+          SpcHubBroker.cs           ← ISpcHubBroker / IAlarmHubBroker / IWorkorderHubBroker 實作
+        Program.cs                  ← DI / Hub 註冊 / hosted services / CORS
+      Application/                ← 不依賴 Infrastructure
+        Domain/
+          DomainProfile.cs / DomainProfileService.cs   ← W05
+        Hubs/
+          ISpcHubBroker.cs          ← Hub broker 抽象（解耦 Application ↔ SignalR）
+        Messaging/
+          IMessageHandler.cs        ← IKafkaMessageHandler / IRabbitMessageHandler
+        Spc/                        ← W05：SPC 引擎（C# 移植自 Python）
+          SpcModels.cs              ← SpcInspectionEvent / SpcPointPayload / SpcRuleViolation
+          SpcWindowState.cs         ← 25 點滑動視窗（thread-safe）
+          ProcessCapability.cs      ← Ca / Cp / Cpk + 等級
+          SpcRulesEngine.cs         ← 八大規則偵測
+        Workers/
+          SpcRealtimeWorker.cs      ← Kafka aoi.inspection.raw → SignalR /hubs/spc
+      Domain/Entities/            ← 純資料模型
+        Tool / Lot / Wafer (含 PanelNo) / Recipe / ProcessRun
+        Alarm / Defect / DefectImage / DefectReview
+        Workorder
+        MaterialLot / PanelMaterialUsage / PanelStationLog   ← W08 新增
       Infrastructure/
-        Data/           ← EF Core DbContext、Repository 實作
-        TimeSeries/     ← InfluxDB 寫入邏輯（讀取 yield_trend / tool_metrics）
-        Messaging/      ← RabbitMQ / Kafka 整合（可選：若後端需直接消費）
+        Data/
+          AoiOpsDbContext.cs
+          AoiOpsDbInitializer.cs    ← 含 W08 seed
+        Messaging/
+          MessagingOptions.cs       ← KafkaOptions / RabbitMqOptions
+          KafkaConsumerHostedService.cs
+          RabbitMqConsumerHostedService.cs
+        Workers/                    ← W07
+          AlarmRabbitWorker.cs      ← RabbitMQ alert  → DB + /hubs/alarm
+          WorkorderRabbitWorker.cs  ← RabbitMQ workorder → DB + /hubs/workorder
     tests/
+      AOIOpsPlatform.Api.Tests/
+        SpcRulesEngineTests.cs      ← W05 八大規則 / Cpk 單元測試
     AOIOpsPlatform.sln
 
-  services/
-    data-simulator/
-      app/
-        __main__.py           ← 核心：模擬 AOI 設備直接發送 Kafka 事件（不經 MQTT）
-        scenario/             ← 正常 / 異常 / 漂移 / 誤判情境定義
+  services/                     ← Python 服務
+    ingestion/                  ← AOI 設備模擬 + Kafka producer + DB writer（單一容器）
+      app/__main__.py
       requirements.txt
       Dockerfile
-
-    kafka-consumers/          ← 新增：Kafka Consumer Workers（三個獨立消費群）
-      influx-writer/          ← Consumer Group A：寫 InfluxDB 時序資料
-        app/
-          consumer.py         ← 從 aoi.inspection.raw 消費 → 寫 tool_metrics / yield_trend
-        requirements.txt
-        Dockerfile
-      rabbitmq-publisher/     ← Consumer Group B：異常事件路由至 RabbitMQ
-        app/
-          consumer.py         ← 判斷 severity → publish to RabbitMQ exchange
-          router.py           ← alert queue / workorder queue 路由邏輯
-        requirements.txt
-        Dockerfile
-      db-writer/              ← Consumer Group C：業務資料寫入 PostgreSQL
-        app/
-          consumer.py         ← 從 aoi.inspection.raw 消費 → 寫 process_runs / defects
-        requirements.txt
-        Dockerfile
-
-    spc-service/              ← 新增：SPC 統計製程管制計算服務（port 8001）
+    kafka-consumers/
+      influx-writer/            ← Kafka aoi.inspection.raw → InfluxDB
+        app/                    requirements.txt   Dockerfile
+      rabbitmq-publisher/       ← Kafka → RabbitMQ alert / workorder
+        app/                    requirements.txt   Dockerfile
+    spc-service/                ← 批次 / 歷史 SPC 報表（FastAPI，port 8001）
       app/
-        main.py               ← FastAPI 進入點（CORS + 所有 /api/spc/* 路由）
-        models.py             ← Pydantic 輸入/輸出模型（對齊前端型別）
-        spc_engine.py         ← 計算引擎（Xbar-R/I-MR/P/Np/C/U + Ca/Cp/Cpk）
-        rules.py              ← 八大規則偵測（Western Electric Rules）
-        demo_data.py          ← Demo 資料產生器（固定 seed，可重現）
+        main.py                 ← 路由
+        spc_engine.py / rules.py / demo_data.py / models.py
       requirements.txt
       Dockerfile
+    rabbitmq-consumers/         ← legacy；W07 起由 .NET 接管
+      db-sink/                  ← docker compose profile=legacy 才會啟動
+
+  shared/                       ← W05
+    domain-profiles/
+      pcb.json                  ← 預設 profile（PCB SMT）
+      semiconductor.json        ← 半導體用語
+      README.md
 
   infra/
     docker/
-      docker-compose.yml      ← 包含：PostgreSQL / InfluxDB / Kafka / RabbitMQ
-                                        / Backend / Frontend / Python Services
-    db/
-      init/                   ← Postgres init script（建表 + seed，第一次啟動自動跑）
-      migrations/             ← EF Core migration 檔案
-    mqtt/
-      mosquitto.conf          ← Broker 設定（含 MQTT Bridge 到 Kafka 的 bridge 設定）
-    kafka/
-      server.properties       ← KRaft mode 設定（新增）
-    rabbitmq/
-      rabbitmq.conf           ← RabbitMQ 設定（新增）
-      definitions.json        ← 預建 exchange / queue 設定（新增）
-    influxdb/
-      influxdb.conf           ← InfluxDB 初始設定（新增）
+      docker-compose.yml        ← PostgreSQL / InfluxDB / Kafka / RabbitMQ / backend / frontend / python services
+    db/init/                    ← Postgres init script
+    rabbitmq/                   ← rabbitmq.conf / definitions.json
+    influxdb/                   ← influxdb 初始設定
+    kafka/                      ← KRaft mode
 
   docs/
-    architecture.md           ← 架構總覽
-    erd.md                    ← 資料表定義（PostgreSQL + InfluxDB measurement）
-    api-spec.md               ← REST API 規格
-    product-scope.md          ← 功能邊界
-    kafka-events.md           ← Kafka topic / payload 格式（新增）
-    rabbitmq-routing.md       ← RabbitMQ exchange / queue 路由設計（新增）
+    architecture.md
+    realtime-signalr.md         ← W09 新增：4 hub 訊息格式
+    domain-profile.md           ← W09 新增：profile schema + 切換指南
+    traceability.md             ← W09 新增：6 站時間軸資料模型 + API
+    erd.md / api-spec.md / product-scope.md
+    kafka-events.md / rabbitmq-routing.md
 
   scripts/
-    dev/                      ← 開發用一鍵腳本（起服務、重置 DB…）
-    seed/                     ← 手動 seed 腳本（補充 init script 之外的測試資料）
+    dev/                        ← 一鍵啟動 / 重置 DB
+    seed/                       ← 補充 seed
 
-  README.md
+  README.md   project.md   graph.md   ERD.md   schedule-tracker.md

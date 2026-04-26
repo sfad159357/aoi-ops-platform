@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Api\AOIOpsPlatform.Api.csproj" />
+    <ProjectReference Include="..\..\src\Application\AOIOpsPlatform.Application.csproj" />
     <ProjectReference Include="..\..\src\Infrastructure\AOIOpsPlatform.Infrastructure.csproj" />
   </ItemGroup>
 
