@@ -124,9 +124,52 @@ def _normalize_conninfo(conn: str) -> str:
 
 
 def build_inspection_event(*, tool_code: str, lot_no: str, wafer_no: int) -> dict:
-    temperature = 180 + random.gauss(0, 1.2)
-    pressure = 120 + random.gauss(0, 2.5)
-    yield_rate = max(0.0, min(100.0, 97 + random.gauss(0, 0.8)))
+    """
+    建立 inspection 事件（aoi.inspection.raw）。
+
+    為什麼要在 ingestion 內實作情境規則：
+    - W03 的目標是「端到端資料流可以 demo」：Kafka→DB/Influx→SPC，以及 Kafka→RabbitMQ→DB。
+    - 事件源如果只有完全隨機的白噪音，控制圖很難展示「漂移/異常/誤判」。
+    - 所以這裡用可切換的 scenario 來注入可預期的型態（方便你驗收與 demo）。
+
+    解決什麼問題：
+    - 讓同一套部署在「不連真機」時，也能重現常見製程問題：漂移（drift）、突波（spike）、誤判（misjudge）。
+    """
+
+    scenario = _env("SIM_SCENARIO", "normal").strip().lower()
+    # 為什麼用 step counter：漂移/鋸齒這類情境需要「跨事件的狀態」，才能形成連續趨勢。
+    step = int(_env("SIM_STEP", "0"))
+
+    base_temp = 180.0
+    base_pressure = 120.0
+    base_yield = 97.0
+
+    # ─── 正常情境：小幅隨機波動 ─────────────────────────────────────────
+    temperature = base_temp + random.gauss(0, 1.2)
+    pressure = base_pressure + random.gauss(0, 2.5)
+    yield_rate = base_yield + random.gauss(0, 0.8)
+
+    # ─── 漂移（drift）：平均值逐步偏移，方便 SPC 顯示趨勢違規 ───────────
+    if scenario == "drift":
+        # 每 1 點讓溫度 +0.05，壓力 +0.08，良率 -0.02（可用來 demo trend）
+        temperature += step * 0.05
+        pressure += step * 0.08
+        yield_rate -= step * 0.02
+
+    # ─── 突波（spike）：偶發超出 3σ 的點，方便 demo rule 1（超出 UCL/LCL） ─
+    if scenario == "spike":
+        if step % 25 == 0 and step > 0:
+            temperature += random.choice([8.0, -8.0])
+            pressure += random.choice([15.0, -15.0])
+            yield_rate += random.choice([3.5, -3.5])
+
+    # ─── 誤判（misjudge）：量測噪音變大（系統誤判/感測器不穩） ───────────
+    if scenario == "misjudge":
+        temperature += random.gauss(0, 3.5)
+        pressure += random.gauss(0, 6.0)
+        yield_rate += random.gauss(0, 2.0)
+
+    yield_rate = max(0.0, min(100.0, yield_rate))
     return {
         "event_id": str(uuid.uuid4()),
         "tool_code": tool_code,
@@ -137,6 +180,25 @@ def build_inspection_event(*, tool_code: str, lot_no: str, wafer_no: int) -> dic
         "pressure": round(pressure, 3),
         "yield_rate": round(yield_rate, 3),
         "defects": [],
+    }
+
+
+def build_defect_event(*, tool_code: str, lot_no: str, severity: str) -> dict:
+    """
+    建立 defect 事件（aoi.defect.event）。
+
+    為什麼要有 defect event：
+    - W03 需要示範 Kafka→RabbitMQ 的業務路由（alert/workorder）。
+    - 我們用 severity 來模擬「告警」與「開工單」的優先級。
+    """
+
+    return {
+        "event_id": str(uuid.uuid4()),
+        "tool_code": tool_code,
+        "lot_no": lot_no,
+        "defect_code": f"DEF-{random.randint(1, 9999):04d}",
+        "severity": severity,
+        "timestamp": _now_iso(),
     }
 
 
@@ -274,15 +336,17 @@ def _insert_process_run(cur: psycopg.Cursor, ev: InspectionEvent) -> None:
 def producer_loop(stop: threading.Event) -> None:
     bootstrap = _env("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
     topic_inspection = _env("KAFKA_TOPIC_INSPECTION", "aoi.inspection.raw")
+    topic_defect = _env("KAFKA_TOPIC_DEFECT", "aoi.defect.event")
 
     tool_codes = ["AOI-A", "AOI-B"]
     lot_nos = ["LOT-001", "LOT-002", "LOT-003"]
 
-    print(f"[ingestion:producer] bootstrap={bootstrap} topic={topic_inspection}")
+    print(f"[ingestion:producer] bootstrap={bootstrap} topic={topic_inspection} defect_topic={topic_defect}")
 
     producer: KafkaProducer | None = None
     attempt = 0
     sent = 0
+    step = 0
     while not stop.is_set():
         try:
             if producer is None:
@@ -292,13 +356,23 @@ def producer_loop(stop: threading.Event) -> None:
             tool = random.choice(tool_codes)
             lot = random.choice(lot_nos)
             wafer = random.randint(1, 25)
+            # 用 env 帶出 step（方便你在 docker logs 看到目前情境進度；也方便未來接成 API/控制台）
+            os.environ["SIM_STEP"] = str(step)
             evt = build_inspection_event(tool_code=tool, lot_no=lot, wafer_no=wafer)
             producer.send(topic_inspection, key=tool, value=evt)
+
+            # 每 20 筆注入一次 defect event（用來 demo Kafka→RabbitMQ 的 alert/workorder 路由）
+            if step % 20 == 0 and step > 0:
+                sev = random.choices(["low", "medium", "high"], weights=[0.6, 0.3, 0.1], k=1)[0]
+                defect = build_defect_event(tool_code=tool, lot_no=lot, severity=sev)
+                producer.send(topic_defect, key=tool, value=defect)
+
             producer.flush(timeout=2)
             # 為什麼要打點：用極低頻率印出 sent 計數，快速確認 producer 真的在送資料（不增加太多 log 壓力）。
             sent += 1
             if sent % 10 == 0:
                 print(f"[ingestion:producer] sent={sent} last_tool={tool} last_lot={lot}")
+            step += 1
             time.sleep(1.0)
         except (NoBrokersAvailable, KafkaTimeoutError) as e:
             # Kafka 還沒 ready / broker 重啟：丟棄舊 producer 並重建（否則會卡 metadata）

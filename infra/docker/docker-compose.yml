@@ -71,8 +71,11 @@ services:
       - PYTHONUNBUFFERED=1
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
       - KAFKA_TOPIC_INSPECTION=aoi.inspection.raw
+      - KAFKA_TOPIC_DEFECT=aoi.defect.event
       - KAFKA_CONSUMER_GROUP=aoiops-ingestion-writer
       - DB_CONNECTION=Host=db;Port=5432;Database=AOIOpsPlatform;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres};
+      # W03 假資料情境：normal|drift|spike|misjudge
+      - SIM_SCENARIO=${SIM_SCENARIO:-normal}
     depends_on:
       db:
         condition: service_healthy
@@ -103,6 +106,74 @@ services:
     command: >
       bash -lc "pip install -r requirements.txt &&
       uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload"
+
+  kafka-influx-writer:
+    # Consumer Group A：Kafka → InfluxDB（時序）
+    image: python:3.12-slim
+    working_dir: /src/services/kafka-consumers/influx-writer
+    volumes:
+      - ../../:/src
+    environment:
+      - PYTHONUNBUFFERED=1
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - KAFKA_TOPIC_INSPECTION=aoi.inspection.raw
+      - KAFKA_CONSUMER_GROUP=aoiops-influx-writer
+      - INFLUX_URL=http://influxdb:8086
+      - INFLUX_ORG=aoiops
+      - INFLUX_BUCKET=aoiops
+      - INFLUX_TOKEN=aoiops-dev-token
+    depends_on:
+      kafka:
+        condition: service_started
+      influxdb:
+        condition: service_started
+    command: >
+      bash -lc "pip install -r requirements.txt &&
+      python -m app"
+
+  kafka-rabbitmq-publisher:
+    # Consumer Group B：Kafka → RabbitMQ（業務路由）
+    image: python:3.12-slim
+    working_dir: /src/services/kafka-consumers/rabbitmq-publisher
+    volumes:
+      - ../../:/src
+    environment:
+      - PYTHONUNBUFFERED=1
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - KAFKA_TOPIC_DEFECT=aoi.defect.event
+      - KAFKA_CONSUMER_GROUP=aoiops-rabbitmq-publisher
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+      - RABBITMQ_QUEUE_ALERT=alert
+      - RABBITMQ_QUEUE_WORKORDER=workorder
+    depends_on:
+      kafka:
+        condition: service_started
+      rabbitmq:
+        condition: service_started
+    command: >
+      bash -lc "pip install -r requirements.txt &&
+      python -m app"
+
+  rabbitmq-db-sink:
+    # RabbitMQ → PostgreSQL（告警/工單落地）
+    image: python:3.12-slim
+    working_dir: /src/services/rabbitmq-consumers/db-sink
+    volumes:
+      - ../../:/src
+    environment:
+      - PYTHONUNBUFFERED=1
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+      - RABBITMQ_QUEUE_ALERT=alert
+      - RABBITMQ_QUEUE_WORKORDER=workorder
+      - DB_CONNECTION=Host=db;Port=5432;Database=AOIOpsPlatform;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres};
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_started
+    command: >
+      bash -lc "pip install -r requirements.txt &&
+      python -m app"
 
   kafka:
     # 使用官方 Apache Kafka image，避免第三方 tag 不存在造成新手卡住 pull 失敗
