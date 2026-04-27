@@ -17,7 +17,7 @@ SIM_SCENARIO ?= normal
 export DOMAIN_PROFILE
 export SIM_SCENARIO
 
-.PHONY: up down restart seed smoke logs ps profile-pcb profile-semiconductor scenario-normal scenario-drift scenario-spike scenario-misjudge help
+.PHONY: up down restart seed smoke logs ps profile-pcb profile-semiconductor scenario-normal scenario-drift scenario-spike scenario-misjudge mssql-up mssql-down mssql-shell help
 
 help:  ## 顯示可用指令
 	@echo "AOI Ops Platform — make targets"
@@ -110,3 +110,30 @@ scenario-spike:
 	SIM_SCENARIO=spike $(COMPOSE) up -d --force-recreate ingestion
 scenario-misjudge:
 	SIM_SCENARIO=misjudge $(COMPOSE) up -d --force-recreate ingestion
+
+# ── SQL Server（Azure SQL Edge / ARM64 原生）便利 target ──
+# 為什麼獨立成 mssql-up / mssql-down 而非塞進 up / down：
+# - mssql 對既有 postgres / kafka / 業務服務「沒有任何相依」，是獨立的孤島，
+#   因此給選用者單獨開關即可，避免每個人都被迫多吃一份 SQL Server 記憶體。
+# - mssql-shell 用來快速進 sqlcmd 排查；若密碼有改，從環境變數 MSSQL_SA_PASSWORD 讀取，
+#   保留預設 fallback 與 .env.example 一致，避免新成員忘了 export 而打不進去。
+mssql-up:  ## 單獨啟動 SQL Server（azure-sql-edge）+ init sidecar 建空 DB
+	$(COMPOSE) up -d mssql mssql-init
+	@echo ""
+	@echo ">> SQL Server (azure-sql-edge) 已啟動"
+	@echo ">>   host         : localhost"
+	@echo ">>   port         : 1433"
+	@echo ">>   user / pass  : sa / $${MSSQL_SA_PASSWORD:-Your_password123!}"
+	@echo ">>   default DB   : AOIOpsPlatform_MSSQL"
+	@echo ">>   進 shell      : make mssql-shell"
+
+mssql-down:  ## 停掉 SQL Server（保留 volume aoiops_mssql_data）
+	$(COMPOSE) stop mssql mssql-init
+
+mssql-shell:  ## 進 sqlcmd shell（用 SA 帳號）
+	# 為什麼不用 docker exec 進主容器：azure-sql-edge:latest 已移除內建 sqlcmd，
+	# 必須另外用 mcr.microsoft.com/mssql-tools image，並掛到 compose 網路 aoiops_default
+	# 才連得到 mssql service（amd64 image 走 Rosetta，互動式輸入體感無感）。
+	docker run -it --rm --network aoiops_default --platform linux/amd64 \
+	  mcr.microsoft.com/mssql-tools:latest \
+	  /opt/mssql-tools/bin/sqlcmd -S mssql -U sa -P "$${MSSQL_SA_PASSWORD:-Your_password123!}"

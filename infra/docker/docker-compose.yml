@@ -95,6 +95,62 @@ services:
       retries: 10
       start_period: 15s
 
+  # ── 新增：SQL Server（Apple Silicon 原生 ARM64 用 Azure SQL Edge）──
+  # 為什麼用 azure-sql-edge 而非官方 mssql/server：
+  # - 官方 mcr.microsoft.com/mssql/server 只發 amd64 image，在 M1/M2 走 Rosetta 模擬，
+  #   常因預設 SQL Server 記憶體配置 + 模擬器開銷直接 OOM 退出（之前建置失敗的根因）。
+  # - azure-sql-edge 是 Microsoft 官方為 ARM64 出的精簡版，原生跑在 M1，記憶體佔用低、
+  #   T-SQL 約 95% 相容，作為 dev / demo 後端足夠。
+  # 此服務「不被任何既存 service depends_on」，crash loop 不會 cascade 到 postgres/backend。
+  mssql:
+    image: mcr.microsoft.com/azure-sql-edge:latest
+    restart: unless-stopped
+    environment:
+      # SA 密碼必須符合複雜度（≥8 chars、含大小寫/數字/符號），預設沿用 .env.example
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=${MSSQL_SA_PASSWORD:-Your_password123!}
+      - MSSQL_PID=Developer
+    ports:
+      - "1433:1433"
+    volumes:
+      - aoiops_mssql_data:/var/opt/mssql
+    healthcheck:
+      # 為什麼用 bash + /dev/tcp 而非 sqlcmd：
+      # - 新版 azure-sql-edge (latest) 為了精簡，**已不再內建 sqlcmd**（舊版 1.0.7 才有），
+      #   container 內找不到 /opt/mssql-tools/bin/sqlcmd 導致 healthcheck 永遠 starting。
+      # - bash 內建的 /dev/tcp/<host>/<port> 偽裝置可在不依賴外部工具下做 TCP 探測；
+      #   配合 start_period=30s 等 SQL engine 完成 master DB 初始化後才開放接 query，
+      #   實務上 port 1433 listen = engine ready 已足夠當 readiness 訊號。
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/1433' 2>/dev/null"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+
+  # ── 新增：mssql 一次性 init sidecar ──
+  # 為什麼獨立 sidecar：azure-sql-edge 沒有 postgres 那種 /docker-entrypoint-initdb.d 機制，
+  # 用一次性容器在 mssql healthy 之後執行建表 SQL，跑完即退出（restart: "no"），不佔資源。
+  #
+  # 為什麼用 mcr.microsoft.com/mssql-tools 而非 azure-sql-edge：
+  # - azure-sql-edge:latest 已移除 sqlcmd，無法在 sidecar 內直接呼叫；
+  # - mssql-tools 是 Microsoft 官方專為 client tools 出的 ~150 MB image，內建 sqlcmd；
+  # - 此 image 僅有 amd64 變體，但 sidecar 是 one-shot（跑 <2 秒即 exit），
+  #   M1 Rosetta 模擬影響極小，可接受。
+  mssql-init:
+    image: mcr.microsoft.com/mssql-tools:latest
+    platform: linux/amd64
+    depends_on:
+      mssql:
+        condition: service_healthy
+    environment:
+      - MSSQL_SA_PASSWORD=${MSSQL_SA_PASSWORD:-Your_password123!}
+    volumes:
+      - ../db/mssql-init:/init:ro
+    restart: "no"
+    entrypoint: ["bash", "-lc"]
+    command: >
+      "/opt/mssql-tools/bin/sqlcmd -S mssql -U sa -P \"$$MSSQL_SA_PASSWORD\" -i /init/01_create_db.sql -b"
+
   backend:
     build:
       context: ../../
@@ -272,3 +328,5 @@ volumes:
   aoiops_kafka_data:
   aoiops_rabbitmq_data:
   aoiops_influxdb_data:
+  # 新增：SQL Server 資料 volume（隔離於現有 postgres volume，互不干擾）
+  aoiops_mssql_data:

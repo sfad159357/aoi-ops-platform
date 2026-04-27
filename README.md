@@ -40,6 +40,21 @@ PCB SMT 產線 MES 品質模組：以 **Kafka 即時推播 + .NET Core SignalR**
 
 ---
 
+## 二點五、版本對照（.NET 8 一致性）
+
+為了確保「本機開發 / Docker / CI」一致，本專案 **統一使用 .NET 8**：
+
+| 場景 | 使用版本 | 設定位置 |
+|---|---|---|
+| 本機 `dotnet` SDK | **8.0.420** | `global.json`（固定 SDK） |
+| Docker build（編譯） | **`mcr.microsoft.com/dotnet/sdk:8.0`** | `backend/Dockerfile`（build stage） |
+| Docker runtime（執行） | **`mcr.microsoft.com/dotnet/aspnet:8.0`** | `backend/Dockerfile`（runtime stage） |
+| Docker Compose backend | **同上（由 Dockerfile 決定）** | `infra/docker/docker-compose.yml` → `backend.build` |
+
+> 你可以在 repo 根目錄用 `dotnet --version` 確認目前被 `global.json` 鎖定的 SDK 版本。
+
+---
+
 ## 三、即時資料流
 
 ```
@@ -107,6 +122,42 @@ curl -s http://localhost:8080/api/lots | head -c 200; echo
 curl -s http://localhost:8080/api/alarms?take=5 | head -c 200; echo
 curl -s http://localhost:8080/api/workorders?take=5 | head -c 200; echo
 curl -s "http://localhost:8080/api/trace/panels/recent?take=3"; echo
+```
+
+---
+
+### SQL Server（Azure SQL Edge / Apple Silicon ARM64）
+
+> **為什麼用 Azure SQL Edge**：官方 `mcr.microsoft.com/mssql/server` 只發 amd64 image，在 M1/M2 走 Rosetta 模擬常 OOM；`azure-sql-edge` 是 Microsoft 官方 ARM64 原生版，記憶體佔用低、T-SQL 約 95% 相容。
+> SQL Server 容器與既有 PostgreSQL / Kafka / 業務服務完全隔離，單獨啟停不影響主系統。
+
+```bash
+make mssql-up      # 拉 image → 啟動 SQL Server → 自動建空 DB AOIOpsPlatform_MSSQL
+make mssql-shell   # 進 sqlcmd 互動 shell（sa 帳號）
+make mssql-down    # 停掉（保留 volume aoiops_mssql_data）
+```
+
+連線資訊（開發環境預設值，詳見 `.env`）：
+
+| 欄位 | 值 |
+|---|---|
+| Host | `localhost` |
+| Port | `1433` |
+| 帳號 | `sa` |
+| 密碼 | `Your_password123!` |
+| 預設 DB | `AOIOpsPlatform_MSSQL` |
+
+.NET 連線字串：
+```
+Server=localhost,1433;Database=AOIOpsPlatform_MSSQL;User Id=sa;Password=Your_password123!;TrustServerCertificate=True;
+```
+
+進 sqlcmd 後常用指令：
+```sql
+SELECT name FROM sys.databases;         -- 列所有資料庫
+USE AOIOpsPlatform_MSSQL;               -- 切換資料庫
+SELECT @@VERSION;                        -- 確認版本
+GO
 ```
 
 ---

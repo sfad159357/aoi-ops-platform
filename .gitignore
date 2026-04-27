@@ -24,6 +24,7 @@ schedule.md
 schedule-tracker.md
 log.md
 .gitignore
+docs/
 
 # Cursor / IDE
 .cursor/
