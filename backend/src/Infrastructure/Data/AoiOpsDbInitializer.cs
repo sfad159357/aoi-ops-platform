@@ -40,6 +40,100 @@ public static class AoiOpsDbInitializer
         var created = await db.Database.EnsureCreatedAsync(cancellationToken);
         logger.LogInformation("Database EnsureCreated completed. Created={Created}", created);
 
+        // 為什麼要做「最小 schema patch」：
+        // - EnsureCreated 只在第一次建庫時生效；容器資料卷已存在時，不會自動補欄位；
+        // - 本專案的 Traceability API 依賴 wafers.panel_no 作為可追溯的識別碼，
+        //   若舊的資料卷沒有這欄位，會導致 /api/trace/panels/recent 直接 500（column does not exist）。
+        // - 這裡用 IF NOT EXISTS 做安全升級，讓既有環境不中斷，同時不需要手動 drop volume。
+        await db.Database.ExecuteSqlRawAsync(
+            """
+            ALTER TABLE wafers
+            ADD COLUMN IF NOT EXISTS panel_no varchar(100) NULL;
+            """,
+            cancellationToken);
+        await db.Database.ExecuteSqlRawAsync(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS ix_wafers_panel_no_notnull
+            ON wafers(panel_no)
+            WHERE panel_no IS NOT NULL;
+            """,
+            cancellationToken);
+
+        // 為什麼要補齊 Traceability 三張表：
+        // - 本專案早期用 EnsureCreated 建表，但「後來新增的表」不會出現在既有資料卷；
+        // - 因此 /api/trace/panel/{panelNo} 在舊 DB 會直接噴 42P01（relation does not exist）。
+        // - 用 CREATE TABLE IF NOT EXISTS 可以讓既有環境無痛升級，不必要求使用者 drop volume。
+        await db.Database.ExecuteSqlRawAsync(
+            """
+            CREATE TABLE IF NOT EXISTS material_lots (
+              id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+              material_lot_no varchar(100) NOT NULL,
+              material_type varchar(100) NOT NULL,
+              material_name varchar(200) NULL,
+              supplier varchar(200) NULL,
+              received_at timestamptz NULL,
+              created_at timestamptz NOT NULL DEFAULT now()
+            );
+            """,
+            cancellationToken);
+        await db.Database.ExecuteSqlRawAsync(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS ix_material_lots_material_lot_no
+            ON material_lots(material_lot_no);
+            """,
+            cancellationToken);
+        await db.Database.ExecuteSqlRawAsync(
+            """
+            CREATE INDEX IF NOT EXISTS ix_material_lots_material_type
+            ON material_lots(material_type);
+            """,
+            cancellationToken);
+
+        await db.Database.ExecuteSqlRawAsync(
+            """
+            CREATE TABLE IF NOT EXISTS panel_material_usage (
+              panel_id uuid NOT NULL,
+              material_lot_id uuid NOT NULL,
+              quantity numeric(18,4) NULL,
+              used_at timestamptz NULL,
+              PRIMARY KEY (panel_id, material_lot_id)
+            );
+            """,
+            cancellationToken);
+        await db.Database.ExecuteSqlRawAsync(
+            """
+            CREATE INDEX IF NOT EXISTS ix_panel_material_usage_material_lot_id
+            ON panel_material_usage(material_lot_id);
+            """,
+            cancellationToken);
+
+        await db.Database.ExecuteSqlRawAsync(
+            """
+            CREATE TABLE IF NOT EXISTS panel_station_log (
+              id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+              panel_id uuid NOT NULL,
+              station_code varchar(50) NOT NULL,
+              entered_at timestamptz NOT NULL,
+              exited_at timestamptz NULL,
+              result varchar(50) NULL,
+              operator varchar(100) NULL,
+              note varchar(2000) NULL
+            );
+            """,
+            cancellationToken);
+        await db.Database.ExecuteSqlRawAsync(
+            """
+            CREATE INDEX IF NOT EXISTS ix_panel_station_log_panel_id_entered_at
+            ON panel_station_log(panel_id, entered_at);
+            """,
+            cancellationToken);
+        await db.Database.ExecuteSqlRawAsync(
+            """
+            CREATE INDEX IF NOT EXISTS ix_panel_station_log_station_code
+            ON panel_station_log(station_code);
+            """,
+            cancellationToken);
+
         // Seed（開發用假資料）
         // 為什麼要在開發環境 seed：
         // - 新手最容易卡「表有了，但畫面不知道要顯示什麼」。
@@ -280,6 +374,86 @@ public static class AoiOpsDbInitializer
 
             await db.SaveChangesAsync(cancellationToken);
             logger.LogInformation("Seed completed.");
+        }
+
+        // 為什麼要補一份「追溯可用」的 seed（即使 tools/lots 早就存在）：
+        // - 早期版本可能只 seed 了 tools/lots/defects，沒有 seed 追溯三表；
+        // - 追溯頁若完全沒資料，使用者會以為功能壞掉（其實只是 DB 空）。
+        // - 因此只要 panel_station_log 是空的，就挑一張最近有 panel_no 的板補一份 6 站時間軸 + 物料用料。
+        var hasAnyTrace = await db.PanelStationLogs.AnyAsync(cancellationToken);
+        if (!hasAnyTrace)
+        {
+            var now = DateTimeOffset.UtcNow;
+            var panel = await db.Wafers
+                .AsNoTracking()
+                .Where(w => w.PanelNo != null)
+                .OrderByDescending(w => w.CreatedAt)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (panel is not null)
+            {
+                logger.LogInformation("Seeding traceability data for panel={PanelNo} ...", panel.PanelNo);
+
+                // 物料批號（最小 demo）
+                var solder = new Domain.Entities.MaterialLot
+                {
+                    Id = Guid.NewGuid(),
+                    MaterialLotNo = $"SOLDER-{now:yyyyMMdd}-001",
+                    MaterialType = "solder_paste",
+                    MaterialName = "錫膏 SAC305",
+                    Supplier = "ABC Solder Co.",
+                    ReceivedAt = now.AddDays(-3),
+                    CreatedAt = now,
+                };
+                var fr4 = new Domain.Entities.MaterialLot
+                {
+                    Id = Guid.NewGuid(),
+                    MaterialLotNo = $"FR4-{now:yyyyMMdd}-001",
+                    MaterialType = "fr4",
+                    MaterialName = "FR4 1.6mm",
+                    Supplier = "XYZ Laminate Inc.",
+                    ReceivedAt = now.AddDays(-7),
+                    CreatedAt = now,
+                };
+                db.MaterialLots.AddRange(solder, fr4);
+
+                // 6 站時間軸（用 profile 的 station code 會更漂亮，但 initializer 不應依賴 application 服務）
+                var stations = new[] { "SPI", "SMT", "REFLOW", "AOI", "ICT", "FQC" };
+                for (var i = 0; i < stations.Length; i++)
+                {
+                    var enteredAt = now.AddMinutes(-30 + i * 4);
+                    db.PanelStationLogs.Add(new Domain.Entities.PanelStationLog
+                    {
+                        Id = Guid.NewGuid(),
+                        PanelId = panel.Id,
+                        StationCode = stations[i],
+                        EnteredAt = enteredAt,
+                        ExitedAt = enteredAt.AddMinutes(3),
+                        Result = i == 3 ? "warn" : "pass",
+                        Operator = i < 3 ? "OP-001" : "AOI-A",
+                        Note = i == 3 ? "AOI warning（seed）" : null,
+                    });
+                }
+
+                db.PanelMaterialUsages.AddRange(
+                    new Domain.Entities.PanelMaterialUsage
+                    {
+                        PanelId = panel.Id,
+                        MaterialLotId = solder.Id,
+                        Quantity = 0.85m,
+                        UsedAt = now.AddMinutes(-30),
+                    },
+                    new Domain.Entities.PanelMaterialUsage
+                    {
+                        PanelId = panel.Id,
+                        MaterialLotId = fr4.Id,
+                        Quantity = 1m,
+                        UsedAt = now.AddMinutes(-30),
+                    });
+
+                await db.SaveChangesAsync(cancellationToken);
+                logger.LogInformation("Traceability seed completed.");
+            }
         }
     }
 }

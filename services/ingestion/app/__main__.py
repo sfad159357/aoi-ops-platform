@@ -250,18 +250,37 @@ def _get_or_create_lot_id(cur: psycopg.Cursor, lot_no: str) -> str:
     return lot_id
 
 
-def _get_or_create_wafer_id(cur: psycopg.Cursor, lot_id: str, wafer_no: str) -> str:
+def _get_or_create_wafer_id(cur: psycopg.Cursor, lot_id: str, lot_no: str, wafer_no: str) -> str:
     cur.execute("SELECT id FROM wafers WHERE lot_id = %s AND wafer_no = %s", (lot_id, wafer_no))
     row = cur.fetchone()
     if row:
-        return str(row[0])
+        wafer_id = str(row[0])
+        # 為什麼在「已存在」時也補 panel_no：
+        # - 實務上 lot/wafer 可能先被寫入（早期版本沒有 panel_no），
+        #   之後才升級 schema / 程式；
+        # - 若只在 INSERT 時寫 panel_no，舊資料會永遠是 NULL，追溯頁的 recent list 仍會是空的。
+        panel_no = f"{lot_no}-{wafer_no}"
+        cur.execute(
+            """
+            UPDATE wafers
+            SET panel_no = %s
+            WHERE id = %s AND panel_no IS NULL
+            """,
+            (panel_no, wafer_id),
+        )
+        return wafer_id
     wafer_id = str(uuid.uuid4())
+    # 為什麼要補 panel_no：
+    # - Traceability 的 RecentPanels endpoint 會用 `WHERE panel_no IS NOT NULL` 當作「可追溯的板」條件；
+    # - 先前 ingestion 只寫 wafer_no，沒有寫 panel_no，導致追溯頁「最近板」永遠是空的，看起來像沒預設資料。
+    # - 這裡用 lot_no + wafer_no 組一個可讀的板號，兼顧 demo 與真實情境（板號通常可由批次+序號推得）。
+    panel_no = f"{lot_no}-{wafer_no}"
     cur.execute(
         """
-        INSERT INTO wafers (id, lot_id, wafer_no, status, created_at)
-        VALUES (%s, %s, %s, %s, now())
+        INSERT INTO wafers (id, lot_id, wafer_no, panel_no, status, created_at)
+        VALUES (%s, %s, %s, %s, %s, now())
         """,
-        (wafer_id, lot_id, wafer_no, "in_progress"),
+        (wafer_id, lot_id, wafer_no, panel_no, "in_progress"),
     )
     return wafer_id
 
@@ -300,7 +319,7 @@ def _insert_process_run(cur: psycopg.Cursor, ev: InspectionEvent) -> None:
     tool_id = _get_or_create_tool_id(cur, ev.tool_code)
     recipe_id = _get_or_create_recipe_id(cur)
     lot_id = _get_or_create_lot_id(cur, ev.lot_no)
-    wafer_id = _get_or_create_wafer_id(cur, lot_id, ev.wafer_no)
+    wafer_id = _get_or_create_wafer_id(cur, lot_id, ev.lot_no, ev.wafer_no)
 
     cur.execute(
         """

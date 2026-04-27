@@ -27,6 +27,7 @@ export default function TraceabilityPage() {
 
   const [panelNoInput, setPanelNoInput] = useState<string>('')
   const [recent, setRecent] = useState<RelatedPanel[]>([])
+  const [recentQuery, setRecentQuery] = useState<string>('')
   const [trace, setTrace] = useState<PanelTrace | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -53,6 +54,32 @@ export default function TraceabilityPage() {
     // - 最近板列表只在頁面初次載入時撈一次；之後 input 變動不應重抓。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // 為什麼要做模糊搜尋：
+  // - 追溯時常見情境是「拿到一串板號/批號碎片」就想快速定位；
+  // - 不強制精準匹配，能讓工程師用 key-in 立刻縮小候選清單。
+  const filteredRecent = useMemo(() => {
+    const q = recentQuery.trim().toLowerCase()
+    if (!q) return recent
+    return recent.filter((r) => {
+      const a = r.panelNo.toLowerCase()
+      const b = (r.lotNo ?? '').toLowerCase()
+      return a.includes(q) || b.includes(q)
+    })
+  }, [recent, recentQuery])
+
+  // 為什麼物料預設最新在上：
+  // - 真實追溯通常先看「最近一筆用料/到貨」來判斷是否是同一批異常擴散；
+  // - 新 → 舊排列可讓使用者第一眼看到最新批號。
+  const sortedMaterials = useMemo(() => {
+    const list = trace?.materials ?? []
+    return [...list].sort((a, b) => {
+      const ta = a.receivedAt ? new Date(a.receivedAt).getTime() : 0
+      const tb = b.receivedAt ? new Date(b.receivedAt).getTime() : 0
+      if (ta !== tb) return tb - ta
+      return (b.materialLotNo ?? '').localeCompare(a.materialLotNo ?? '')
+    })
+  }, [trace?.materials])
 
   // 為什麼把 fetch trace 拆成 useEffect 依 panelNoInput：
   // - 當使用者點選 recent panel 或敲 Enter 觸發查詢，效果一致；
@@ -119,6 +146,12 @@ export default function TraceabilityPage() {
           placeholder="例如 PCB-20240422-LOT-001-1"
           style={inputStyle}
         />
+        <input
+          value={recentQuery}
+          onChange={(e) => setRecentQuery(e.target.value)}
+          placeholder="模糊搜尋（板號 / 批次）"
+          style={searchInputStyle}
+        />
         {recent.length > 0 && (
           <select
             value={panelNoInput}
@@ -126,7 +159,7 @@ export default function TraceabilityPage() {
             style={selectStyle}
           >
             <option value="">— 最近 {recent.length} 張 —</option>
-            {recent.map((r) => (
+            {filteredRecent.map((r) => (
               <option key={r.panelNo} value={r.panelNo}>
                 {r.panelNo}（lot={r.lotNo}）
               </option>
@@ -164,7 +197,7 @@ export default function TraceabilityPage() {
           {/* 物料批號 */}
           <section style={sectionStyle}>
             <h2 style={sectionTitleStyle}>使用物料批號</h2>
-            {trace.materials.length === 0 ? (
+            {sortedMaterials.length === 0 ? (
               <div style={emptyStyle}>沒有任何物料記錄。</div>
             ) : (
               <table style={tableStyle}>
@@ -179,7 +212,7 @@ export default function TraceabilityPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {trace.materials.map((m) => (
+                  {sortedMaterials.map((m) => (
                     <tr key={m.materialLotNo} style={{ borderBottom: '1px solid #21262d' }}>
                       <td style={tdMonoStyle}>{m.materialType}</td>
                       <td style={tdMonoStyle}>{m.materialLotNo}</td>
@@ -395,6 +428,17 @@ const selectStyle: React.CSSProperties = {
   borderRadius: 6,
   fontFamily: 'JetBrains Mono, monospace',
   fontSize: 13,
+}
+
+const searchInputStyle: React.CSSProperties = {
+  background: '#161b22',
+  color: '#e5e7eb',
+  border: '1px solid #21262d',
+  padding: '6px 8px',
+  borderRadius: 6,
+  fontFamily: 'JetBrains Mono, monospace',
+  fontSize: 13,
+  width: 220,
 }
 
 const sectionStyle: React.CSSProperties = {

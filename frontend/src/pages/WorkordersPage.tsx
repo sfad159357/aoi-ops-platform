@@ -12,7 +12,7 @@
 // - 工單建立後不需要重整就會跑出來，配合「新一行高亮 1.5 秒」動畫，
 //   讓主管能即時感受系統壓力。
 
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { HubConnectionState } from '@microsoft/signalr'
 import { useProfile } from '../domain/useProfile'
 import { useWorkorderStream, type WorkorderEvent } from '../realtime/useWorkorderStream'
@@ -43,6 +43,7 @@ export default function WorkordersPage() {
   const { profile } = useProfile()
   const [bootstrap, setBootstrap] = useState<WorkorderEvent[] | undefined>(undefined)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [dateFilter, setDateFilter] = useState<string>(() => todayYmd())
   const baseUrl = useMemo(
     () => (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:8080',
     []
@@ -65,6 +66,19 @@ export default function WorkordersPage() {
   }, [baseUrl])
 
   const { workorders, connectionState } = useWorkorderStream({ bootstrap, maxItems: 200 })
+
+  // 為什麼要做「日期篩選，預設今天」：
+  // - 工單屬於日常排程/追單工具，主管通常先看「今天新增/今天未結案」；
+  // - 預設今天能讓 demo 或實際使用時不會看到空白或被歷史工單淹沒。
+  const filteredWorkorders = useMemo(() => {
+    if (!dateFilter) return workorders
+    return workorders.filter((w) => toYmd(w.createdAt) === dateFilter)
+  }, [workorders, dateFilter])
+
+  const grouped = useMemo(
+    () => groupByYmd(filteredWorkorders, (w) => w.createdAt),
+    [filteredWorkorders]
+  )
 
   const [recentlyAdded, setRecentlyAdded] = useState<Set<string>>(new Set())
   useEffect(() => {
@@ -98,7 +112,16 @@ export default function WorkordersPage() {
             <span style={{ marginLeft: 8 }}>SignalR {labelForState(connectionState)}</span>
           </div>
         </div>
-        <div style={{ color: '#9ca3af', fontSize: 12 }}>共 {workorders.length} 筆（即時）</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <label style={{ color: '#9ca3af', fontSize: 12 }}>日期</label>
+          <input
+            type="date"
+            value={dateFilter}
+            onChange={(e) => setDateFilter(e.target.value)}
+            style={dateInputStyle}
+          />
+          <div style={{ color: '#9ca3af', fontSize: 12 }}>共 {filteredWorkorders.length} 筆</div>
+        </div>
       </div>
 
       {loadError && (
@@ -117,28 +140,37 @@ export default function WorkordersPage() {
             </tr>
           </thead>
           <tbody>
-            {workorders.map((w) => (
-              <tr
-                key={w.id}
-                style={{
-                  background: recentlyAdded.has(w.id) ? '#1f2a37' : 'transparent',
-                  transition: 'background 1.2s ease-out',
-                  borderBottom: '1px solid #21262d',
-                }}
-              >
-                <td style={tdMonoStyle}>{formatTime(w.createdAt)}</td>
-                <td style={tdMonoStyle}>{w.workorderNo}</td>
-                <td style={tdStyle}>
-                  <PriorityBadge priority={w.priority} />
-                </td>
-                <td style={tdStyle}>{w.status ?? '-'}</td>
-                <td style={tdMonoStyle}>{w.lotNo ?? '-'}</td>
-              </tr>
+            {grouped.map(([ymd, items]) => (
+              <Fragment key={`group-${ymd}`}>
+                <tr>
+                  <td colSpan={5} style={groupHeaderStyle}>
+                    {ymd}（{items.length} 筆）
+                  </td>
+                </tr>
+                {items.map((w) => (
+                  <tr
+                    key={w.id}
+                    style={{
+                      background: recentlyAdded.has(w.id) ? '#1f2a37' : 'transparent',
+                      transition: 'background 1.2s ease-out',
+                      borderBottom: '1px solid #21262d',
+                    }}
+                  >
+                    <td style={tdMonoStyle}>{formatTime(w.createdAt)}</td>
+                    <td style={tdMonoStyle}>{w.workorderNo}</td>
+                    <td style={tdStyle}>
+                      <PriorityBadge priority={w.priority} />
+                    </td>
+                    <td style={tdStyle}>{w.status ?? '-'}</td>
+                    <td style={tdMonoStyle}>{w.lotNo ?? '-'}</td>
+                  </tr>
+                ))}
+              </Fragment>
             ))}
-            {workorders.length === 0 && (
+            {filteredWorkorders.length === 0 && (
               <tr>
                 <td colSpan={5} style={{ ...tdStyle, textAlign: 'center', color: '#6b7280', padding: 24 }}>
-                  尚未收到任何工單。觸發一次高嚴重度 defect 後即可看到 P1 工單。
+                  這一天沒有任何工單（或尚未收到即時事件）。觸發一次高嚴重度 defect 後即可看到 P1 工單。
                 </td>
               </tr>
             )}
@@ -189,6 +221,30 @@ function formatTime(iso: string): string {
   } catch {
     return iso
   }
+}
+
+function toYmd(iso: string): string {
+  try {
+    const d = new Date(iso)
+    return d.toLocaleDateString('sv-SE')
+  } catch {
+    return ''
+  }
+}
+
+function todayYmd(): string {
+  return new Date().toLocaleDateString('sv-SE')
+}
+
+function groupByYmd<T>(rows: T[], getIso: (row: T) => string): Array<[string, T[]]> {
+  const map = new Map<string, T[]>()
+  for (const r of rows) {
+    const k = toYmd(getIso(r)) || 'unknown'
+    const arr = map.get(k)
+    if (arr) arr.push(r)
+    else map.set(k, [r])
+  }
+  return Array.from(map.entries()).sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : 0))
 }
 
 function labelForState(state: HubConnectionState | 'idle'): string {
@@ -266,4 +322,23 @@ const errorStyle: React.CSSProperties = {
   borderRadius: 6,
   color: '#f0b429',
   fontSize: 12,
+}
+
+const dateInputStyle: React.CSSProperties = {
+  background: '#161b22',
+  color: '#e5e7eb',
+  border: '1px solid #21262d',
+  padding: '6px 8px',
+  borderRadius: 6,
+  fontFamily: 'JetBrains Mono, monospace',
+  fontSize: 12,
+}
+
+const groupHeaderStyle: React.CSSProperties = {
+  padding: '8px 12px',
+  background: '#0b1220',
+  color: '#9ca3af',
+  fontSize: 11,
+  borderBottom: '1px solid #21262d',
+  fontFamily: 'JetBrains Mono, monospace',
 }

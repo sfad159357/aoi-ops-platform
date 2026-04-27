@@ -11,6 +11,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using AOIOpsPlatform.Application.Domain;
 using AOIOpsPlatform.Application.Hubs;
 using AOIOpsPlatform.Application.Messaging;
@@ -131,12 +132,56 @@ public sealed class SpcRealtimeWorker : IKafkaMessageHandler
     /// </summary>
     private static string InferLineCodeFromTool(string toolCode)
     {
-        var lastDash = toolCode.LastIndexOf('-');
-        if (lastDash <= 0) return toolCode;
-        // SMT-A01 → SMT-A；AOI-001 → AOI；中間可能有兩段
-        var firstDash = toolCode.IndexOf('-');
-        if (firstDash == lastDash) return toolCode[..firstDash];
-        return toolCode[..lastDash];
+        // 為什麼不能只用「找最後一個 '-'」：
+        // - 本專案 ingestion 的 toolCode 可能是 AOI-A / AOI-B 這種「已經是產線代碼」，
+        //   若硬切成 AOI 會導致 SignalR group key 不一致（前端訂閱 AOI-A、後端推 AOI），
+        //   結果就是「SPC 頁面完全收不到點」。
+        //
+        // 這裡的策略：
+        // 1) 若已符合常見 line code（例如 AOI-A / SMT-B）就原樣回傳
+        // 2) 若是帶數字尾碼（例如 SMT-A01 / AOI-A12）就去掉尾碼 → SMT-A / AOI-A
+        // 3) 若是 AOI-001 這種用 dash 分隔序號，就回 AOI
+        if (string.IsNullOrWhiteSpace(toolCode)) return string.Empty;
+
+        var s = toolCode.Trim();
+
+        // case1: AOI-A / SMT-B（已經是 line code）
+        if (s.Length == 5 && s[3] == '-' && char.IsLetter(s[4])) return s;
+
+        // case2: SMT-A01 / AOI-A12 → SMT-A / AOI-A
+        // 為什麼不用 Regex：避免引入額外成本；字串掃描即可。
+        if (s.Length >= 6 && s[3] == '-' && char.IsLetter(s[4]))
+        {
+            var i = 5;
+            var hasDigit = false;
+            while (i < s.Length && char.IsDigit(s[i]))
+            {
+                hasDigit = true;
+                i++;
+            }
+            if (hasDigit && i == s.Length)
+            {
+                return s[..5];
+            }
+        }
+
+        // case3: AOI-001 → AOI（dash 後全是數字）
+        var dash = s.IndexOf('-');
+        if (dash > 0 && dash < s.Length - 1)
+        {
+            var ok = true;
+            for (var i = dash + 1; i < s.Length; i++)
+            {
+                if (!char.IsDigit(s[i]))
+                {
+                    ok = false;
+                    break;
+                }
+            }
+            if (ok) return s[..dash];
+        }
+
+        return s;
     }
 
     private static string Truncate(string s) => s.Length <= 200 ? s : s[..200] + "…";
@@ -151,13 +196,26 @@ public sealed class SpcRealtimeWorker : IKafkaMessageHandler
     /// </summary>
     private sealed class SpcInspectionEventRaw
     {
+        // 為什麼每個欄位都加 JsonPropertyName：
+        // - ingestion (Python) 出來的 payload 是 snake_case（tool_code / yield_rate），
+        //   System.Text.Json 的 PropertyNameCaseInsensitive 只處理大小寫，不會把 '_' 視為等價；
+        // - 沒 mapping 的結果是全部欄位都維持 null → SPC 永遠不推點（前端就會看起來「沒數據進來」）。
+        // - 明確標註後，能穩定把 Kafka payload 對齊到 C# DTO。
+        [JsonPropertyName("event_id")]
         public string? EventId { get; set; }
+        [JsonPropertyName("tool_code")]
         public string? ToolCode { get; set; }
+        [JsonPropertyName("lot_no")]
         public string? LotNo { get; set; }
+        [JsonPropertyName("wafer_no")]
         public int WaferNo { get; set; }
+        [JsonPropertyName("timestamp")]
         public DateTimeOffset? Timestamp { get; set; }
+        [JsonPropertyName("temperature")]
         public double? Temperature { get; set; }
+        [JsonPropertyName("pressure")]
         public double? Pressure { get; set; }
+        [JsonPropertyName("yield_rate")]
         public double? YieldRate { get; set; }
 
         public SpcInspectionEvent? ToEvent()

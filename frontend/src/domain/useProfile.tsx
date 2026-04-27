@@ -50,8 +50,12 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     try {
       const res = await fetch(`${getApiBaseUrl()}/api/meta/profile`)
       if (!res.ok) throw new Error(`profile API ${res.status}`)
-      const json = (await res.json()) as DomainProfile
-      setProfile(json)
+      const json = (await res.json()) as unknown
+      // 為什麼要做 profile 欄位正規化：
+      // - 後端 Domain Profile JSON 來源是 `shared/domain-profiles/*.json`，欄位是 snake_case（label_zh / profile_id），
+      //   但前端型別與元件統一使用 camelCase（labelZh / profileId）；
+      // - 若直接 cast，UI 會出現「AOI-A undefined」、「undefined (%)」這種錯誤字樣。
+      setProfile(normalizeProfile(json))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       // 為什麼不把 profile 清掉：
@@ -71,6 +75,77 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
   )
 
   return <ProfileContext.Provider value={value}>{children}</ProfileContext.Provider>
+}
+
+function normalizeProfile(raw: unknown): DomainProfile {
+  // 為什麼做成「兼容兩種格式」：
+  // - 未來後端若改成直接輸出 camelCase（labelZh），前端不需要再跟著改；
+  // - 因此同時支援 labelZh 與 label_zh，擇一有值就用。
+  const r = (raw ?? {}) as any
+
+  const labelZh = (x: any): string => (x?.labelZh ?? x?.label_zh ?? '')
+  const idPrefix = (x: any): string | null | undefined => (x?.idPrefix ?? x?.id_prefix)
+  const goodThreshold = (x: any): number | null | undefined => (x?.goodThreshold ?? x?.good_threshold)
+  const goodThresholdLt = (x: any): number | null | undefined => (x?.goodThresholdLt ?? x?.good_threshold_lt)
+
+  return {
+    profileId: r.profileId ?? r.profile_id ?? 'pcb',
+    displayName: r.displayName ?? r.display_name ?? 'AOI Ops Platform',
+    factory: {
+      name: r.factory?.name ?? '',
+      site: r.factory?.site ?? '',
+    },
+    entities: {
+      panel: {
+        table: r.entities?.panel?.table ?? 'wafers',
+        labelZh: labelZh(r.entities?.panel),
+        idPrefix: idPrefix(r.entities?.panel) ?? null,
+      },
+      lot: {
+        table: r.entities?.lot?.table ?? 'lots',
+        labelZh: labelZh(r.entities?.lot),
+        idPrefix: idPrefix(r.entities?.lot) ?? null,
+      },
+      tool: {
+        table: r.entities?.tool?.table ?? 'tools',
+        labelZh: labelZh(r.entities?.tool),
+        idPrefix: idPrefix(r.entities?.tool) ?? null,
+      },
+    },
+    stations: Array.isArray(r.stations)
+      ? r.stations.map((s: any) => ({ code: s.code ?? '', labelZh: labelZh(s), seq: Number(s.seq ?? 0) }))
+      : [],
+    lines: Array.isArray(r.lines)
+      ? r.lines.map((l: any) => ({ code: l.code ?? '', labelZh: labelZh(l) }))
+      : [],
+    parameters: Array.isArray(r.parameters)
+      ? r.parameters.map((p: any) => ({
+          code: p.code ?? '',
+          labelZh: labelZh(p),
+          unit: p.unit ?? '',
+          usl: Number(p.usl ?? 0),
+          lsl: Number(p.lsl ?? 0),
+          target: Number(p.target ?? 0),
+        }))
+      : [],
+    menus: Array.isArray(r.menus)
+      ? r.menus.map((m: any) => ({ id: m.id ?? '', labelZh: labelZh(m) }))
+      : [],
+    kpi:
+      r.kpi && typeof r.kpi === 'object'
+        ? Object.fromEntries(
+            Object.entries(r.kpi).map(([k, v]) => [
+              k,
+              {
+                labelZh: labelZh(v),
+                goodThreshold: goodThreshold(v) ?? null,
+                goodThresholdLt: goodThresholdLt(v) ?? null,
+              },
+            ])
+          )
+        : {},
+    wording: (r.wording && typeof r.wording === 'object' ? r.wording : {}) as Record<string, string>,
+  }
 }
 
 /**

@@ -11,7 +11,7 @@
 // 解決什麼問題：
 // - 一個頁面同時兼顧「歷史可看」與「即時更新」。
 
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { HubConnectionState } from '@microsoft/signalr'
 import { useProfile } from '../domain/useProfile'
 import { useAlarmStream, type AlarmEvent } from '../realtime/useAlarmStream'
@@ -53,6 +53,7 @@ export default function AlarmsPage() {
   const { profile } = useProfile()
   const [bootstrap, setBootstrap] = useState<AlarmEvent[] | undefined>(undefined)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [dateFilter, setDateFilter] = useState<string>(() => todayYmd())
   const baseUrl = useMemo(
     () => (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:8080',
     []
@@ -78,6 +79,18 @@ export default function AlarmsPage() {
   }, [baseUrl])
 
   const { alarms, connectionState } = useAlarmStream({ bootstrap, maxItems: 200 })
+
+  // 為什麼要做「日期篩選，預設今天」：
+  // - 品質/製程工程師日常最常看的是「今天有哪些異常」，不需要一進來就被歷史資料淹沒；
+  // - 但仍保留切換日期，方便回頭追溯昨天/上週的狀況。
+  const filteredAlarms = useMemo(() => {
+    if (!dateFilter) return alarms
+    return alarms.filter((a) => toYmd(a.triggeredAt) === dateFilter)
+  }, [alarms, dateFilter])
+
+  // 為什麼做日期分組：
+  // - 同一天內仍可能有上百筆事件；用日期段落可快速定位「哪一天爆量」。
+  const grouped = useMemo(() => groupByYmd(filteredAlarms, (a) => a.triggeredAt), [filteredAlarms])
 
   // 為什麼計算「新進來的 id 集合」：
   // - 給 row 加 highlight 動畫，使用者一眼看出「剛剛跳出來的」。
@@ -114,7 +127,16 @@ export default function AlarmsPage() {
             <span style={{ marginLeft: 8 }}>SignalR {labelForState(connectionState)}</span>
           </div>
         </div>
-        <div style={{ color: '#9ca3af', fontSize: 12 }}>共 {alarms.length} 筆（即時）</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <label style={{ color: '#9ca3af', fontSize: 12 }}>日期</label>
+          <input
+            type="date"
+            value={dateFilter}
+            onChange={(e) => setDateFilter(e.target.value)}
+            style={dateInputStyle}
+          />
+          <div style={{ color: '#9ca3af', fontSize: 12 }}>共 {filteredAlarms.length} 筆</div>
+        </div>
       </div>
 
       {loadError && (
@@ -135,30 +157,39 @@ export default function AlarmsPage() {
             </tr>
           </thead>
           <tbody>
-            {alarms.map((a) => (
-              <tr
-                key={a.id}
-                style={{
-                  background: recentlyAdded.has(a.id) ? '#1f2a37' : 'transparent',
-                  transition: 'background 1.2s ease-out',
-                  borderBottom: '1px solid #21262d',
-                }}
-              >
-                <td style={tdMonoStyle}>{formatTime(a.triggeredAt)}</td>
-                <td style={tdStyle}>
-                  <SeverityBadge level={a.alarmLevel} />
-                </td>
-                <td style={tdMonoStyle}>{a.toolCode ?? '-'}</td>
-                <td style={tdMonoStyle}>{a.alarmCode}</td>
-                <td style={tdStyle}>{a.message ?? '-'}</td>
-                <td style={tdStyle}>{a.status ?? '-'}</td>
-                <td style={tdStyle}>{a.source ?? '-'}</td>
-              </tr>
+            {grouped.map(([ymd, items]) => (
+              <Fragment key={`group-${ymd}`}>
+                <tr key={`group-${ymd}`}>
+                  <td colSpan={7} style={groupHeaderStyle}>
+                    {ymd}（{items.length} 筆）
+                  </td>
+                </tr>
+                {items.map((a) => (
+                  <tr
+                    key={a.id}
+                    style={{
+                      background: recentlyAdded.has(a.id) ? '#1f2a37' : 'transparent',
+                      transition: 'background 1.2s ease-out',
+                      borderBottom: '1px solid #21262d',
+                    }}
+                  >
+                    <td style={tdMonoStyle}>{formatTime(a.triggeredAt)}</td>
+                    <td style={tdStyle}>
+                      <SeverityBadge level={a.alarmLevel} />
+                    </td>
+                    <td style={tdMonoStyle}>{a.toolCode ?? '-'}</td>
+                    <td style={tdMonoStyle}>{a.alarmCode}</td>
+                    <td style={tdStyle}>{a.message ?? '-'}</td>
+                    <td style={tdStyle}>{a.status ?? '-'}</td>
+                    <td style={tdStyle}>{a.source ?? '-'}</td>
+                  </tr>
+                ))}
+              </Fragment>
             ))}
-            {alarms.length === 0 && (
+            {filteredAlarms.length === 0 && (
               <tr>
                 <td colSpan={7} style={{ ...tdStyle, textAlign: 'center', color: '#6b7280', padding: 24 }}>
-                  尚未收到任何告警。請確認 ingestion 容器與 RabbitMQ 已啟動。
+                  這一天沒有任何告警（或尚未收到即時事件）。請確認 ingestion 容器與 RabbitMQ 已啟動。
                 </td>
               </tr>
             )}
@@ -219,6 +250,31 @@ function formatTime(iso: string): string {
   } catch {
     return iso
   }
+}
+
+function toYmd(iso: string): string {
+  try {
+    const d = new Date(iso)
+    return d.toLocaleDateString('sv-SE')
+  } catch {
+    return ''
+  }
+}
+
+function todayYmd(): string {
+  return new Date().toLocaleDateString('sv-SE')
+}
+
+function groupByYmd<T>(rows: T[], getIso: (row: T) => string): Array<[string, T[]]> {
+  const map = new Map<string, T[]>()
+  for (const r of rows) {
+    const k = toYmd(getIso(r)) || 'unknown'
+    const arr = map.get(k)
+    if (arr) arr.push(r)
+    else map.set(k, [r])
+  }
+  // 最新日期在上
+  return Array.from(map.entries()).sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : 0))
 }
 
 function labelForState(state: HubConnectionState | 'idle'): string {
@@ -296,4 +352,23 @@ const errorStyle: React.CSSProperties = {
   borderRadius: 6,
   color: '#f0b429',
   fontSize: 12,
+}
+
+const dateInputStyle: React.CSSProperties = {
+  background: '#161b22',
+  color: '#e5e7eb',
+  border: '1px solid #21262d',
+  padding: '6px 8px',
+  borderRadius: 6,
+  fontFamily: 'JetBrains Mono, monospace',
+  fontSize: 12,
+}
+
+const groupHeaderStyle: React.CSSProperties = {
+  padding: '8px 12px',
+  background: '#0b1220',
+  color: '#9ca3af',
+  fontSize: 11,
+  borderBottom: '1px solid #21262d',
+  fontFamily: 'JetBrains Mono, monospace',
 }

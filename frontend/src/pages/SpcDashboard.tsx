@@ -23,6 +23,14 @@ type Tool = { code: string; label: string }
 export default function SpcDashboard() {
   const { profile } = useProfile()
 
+  // 為什麼預設挑 AOI 線：
+  // - 現行 ingestion simulator 的 toolCode 主要是 AOI-A / AOI-B，能確保 demo 一進來就看到即時點；
+  // - 若 profile 沒有 AOI 線，再退回第一條線即可（保持 profile 可擴展性）。
+  const defaultLine = useMemo(
+    () => profile.lines.find((l) => l.code.startsWith('AOI')) ?? profile.lines[0],
+    [profile.lines]
+  )
+
   // 為什麼預設挑 yield_rate：
   // - profile 一定有「良率」欄位（PCB / 半導體都有意義），demo 開啟就能看到資料。
   const defaultParameter = useMemo(
@@ -31,7 +39,7 @@ export default function SpcDashboard() {
   )
 
   const [filter, setFilter] = useState<FilterBarValue>({
-    lineCode: profile.lines[0]?.code ?? '',
+    lineCode: defaultLine?.code ?? '',
     toolCode: '',
     parameterCode: defaultParameter?.code ?? 'yield_rate',
   })
@@ -41,11 +49,11 @@ export default function SpcDashboard() {
   //   reset 為 profile 的第一個合法選項可以保證 SignalR group 不會卡在「沒人推」的狀態。
   useEffect(() => {
     setFilter({
-      lineCode: profile.lines[0]?.code ?? '',
+      lineCode: defaultLine?.code ?? '',
       toolCode: '',
       parameterCode: defaultParameter?.code ?? 'yield_rate',
     })
-  }, [profile.profileId, defaultParameter])
+  }, [profile.profileId, defaultLine, defaultParameter])
 
   const tools = useTools()
   const parameter = useMemo(
