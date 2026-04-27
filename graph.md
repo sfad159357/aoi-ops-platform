@@ -46,7 +46,7 @@ flowchart TB
 
   subgraph Storage["儲存層"]
     INFLUX[("📉 InfluxDB<br/>tool_metrics / yield_trend")]
-    PG[("🗄️ PostgreSQL<br/>lots / wafers / alarms / workorders<br/>material_lots / panel_station_log ...")]
+    MSSQL[("🗄️ SQL Server（Azure SQL Edge）<br/>lots / wafers / alarms / workorders<br/>material_lots / panel_station_log ...")]
   end
 
   subgraph DOTNET["⚙️ ASP.NET Core 8（唯一前端入口）"]
@@ -72,10 +72,10 @@ flowchart TB
   QW --> WO_W
 
   INF_W --> INFLUX
-  AL_W --> PG
-  WO_W --> PG
+  AL_W --> MSSQL
+  WO_W --> MSSQL
 
-  PG --> REST
+  MSSQL --> REST
   INFLUX --> REST
 
   SPC_W --> HUB_SPC
@@ -177,14 +177,14 @@ sequenceDiagram
   participant PUB as Python rabbitmq-publisher
   participant Q as RabbitMQ
   participant W as .NET Worker（AlarmRabbitWorker / WorkorderRabbitWorker）
-  participant PG as PostgreSQL
+  participant DB as SQL Server
   participant H as SignalR Hub
   participant FE as React 前端
 
   K->>PUB: defect event（severity=high/critical）
   PUB->>Q: publish queue=alert / workorder
   Q->>W: deliver（manual ack）
-  W->>PG: INSERT alarms / workorders
+  W->>DB: INSERT alarms / workorders
   W->>H: PushAsync(payload)
   H-->>FE: /hubs/alarm 或 /hubs/workorder
   FE->>FE: 列表頂端新增一行（高亮 1.5s）
@@ -200,24 +200,24 @@ sequenceDiagram
   autonumber
   participant FE as React Traceability
   participant API as TraceController
-  participant PG as PostgreSQL
+  participant DB as SQL Server
 
   FE->>API: GET /api/trace/panels/recent?take=20
-  API->>PG: SELECT recent wafers (with panel_no)
-  PG-->>API: list
+  API->>DB: SELECT recent wafers (with panel_no)
+  DB-->>API: list
   API-->>FE: RelatedPanelDto[]
   FE->>API: GET /api/trace/panel/{panelNo}
-  API->>PG: 1) wafers + lots
-  API->>PG: 2) panel_station_log（6 站時間軸）
-  API->>PG: 3) panel_material_usage join material_lots
-  API->>PG: 4) 同 lot / 同物料的 related panels
-  PG-->>API: 4 段資料
+  API->>DB: 1) wafers + lots
+  API->>DB: 2) panel_station_log（6 站時間軸）
+  API->>DB: 3) panel_material_usage join material_lots
+  API->>DB: 4) 同 lot / 同物料的 related panels
+  DB-->>API: 4 段資料
   API-->>FE: PanelTraceDto
 ```
 
 ---
 
-## 6. ERD（PostgreSQL 部分，對齊 `ERD.md`）
+## 6. ERD（SQL Server 部分，對齊 `ERD.md`）
 
 ```mermaid
 erDiagram

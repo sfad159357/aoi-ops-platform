@@ -17,7 +17,7 @@ PCB SMT 產線 MES 品質模組：以 **Kafka 即時推播 + .NET Core SignalR**
 | ① **SPC 統計製程管制** | Kafka `aoi.inspection.raw` | SignalR `/hubs/spc`（spcPoint / spcViolation） | `SpcDashboard` |
 | ② **工單管理** | RabbitMQ `workorder` | SignalR `/hubs/workorder` + REST 預載 | `WorkordersPage` |
 | ③ **異常記錄** | RabbitMQ `alert`（由 Kafka `aoi.defect.event` 路由而來） | SignalR `/hubs/alarm` + REST 預載 | `AlarmsPage` |
-| ④ **物料追溯查詢** | PostgreSQL（panel_no / 物料批號 / 同 lot） | REST `GET /api/trace/panel/{panelNo}` | `TraceabilityPage` |
+| ④ **物料追溯查詢** | SQL Server（panel_no / 物料批號 / 同 lot） | REST `GET /api/trace/panel/{panelNo}` | `TraceabilityPage` |
 
 ---
 
@@ -30,7 +30,7 @@ PCB SMT 產線 MES 品質模組：以 **Kafka 即時推播 + .NET Core SignalR**
 | 即時推送 | **.NET Core SignalR**（WebSocket，自動降級 SSE / Long Polling） | 4 個 Hub：spc / alarm / workorder / trace |
 | 事件串流 | Apache Kafka 3.x（KRaft mode） | 設備感測層 fan-out |
 | 業務路由 | RabbitMQ 3 + AMQP | alert / workorder 業務佇列 |
-| 結構化資料庫 | PostgreSQL 16 | 業務資料、SPC 計算來源、物料追溯 |
+| 結構化資料庫 | SQL Server（Azure SQL Edge） | 業務資料、SPC 計算來源、物料追溯 |
 | 時序資料庫 | InfluxDB 2.7 | 機台心跳、良率趨勢 |
 | Python 服務 | FastAPI（SPC 報表）/ ingestion / kafka-influx-writer / kafka-rabbitmq-publisher | 模擬器、Kafka 消費端、批次 SPC 報表 |
 | 容器化 | Docker Compose | 一鍵啟動 |
@@ -69,10 +69,10 @@ PCB SMT 產線 MES 品質模組：以 **Kafka 即時推播 + .NET Core SignalR**
    └─▶ .NET DefectRealtimeWorker（規劃）
 
 🐇 RabbitMQ
-   ├─ alert     ─▶ .NET AlarmRabbitWorker     ──▶ PostgreSQL alarms     + /hubs/alarm
-   └─ workorder ─▶ .NET WorkorderRabbitWorker ──▶ PostgreSQL workorders + /hubs/workorder
+   ├─ alert     ─▶ .NET AlarmRabbitWorker     ──▶ SQL Server alarms     + /hubs/alarm
+   └─ workorder ─▶ .NET WorkorderRabbitWorker ──▶ SQL Server workorders + /hubs/workorder
 
-🗄️ PostgreSQL ─▶ ASP.NET Core API（REST：/api/lots / alarms / workorders / trace ...）
+🗄️ SQL Server ─▶ ASP.NET Core API（REST：/api/lots / alarms / workorders / trace ...）
                                        ─▶ /hubs/* SignalR 推播（事件驅動）
                                             ─▶ React 前端 4 大頁
 ```
@@ -129,7 +129,7 @@ curl -s "http://localhost:8080/api/trace/panels/recent?take=3"; echo
 ### SQL Server（Azure SQL Edge / Apple Silicon ARM64）
 
 > **為什麼用 Azure SQL Edge**：官方 `mcr.microsoft.com/mssql/server` 只發 amd64 image，在 M1/M2 走 Rosetta 模擬常 OOM；`azure-sql-edge` 是 Microsoft 官方 ARM64 原生版，記憶體佔用低、T-SQL 約 95% 相容。
-> SQL Server 容器與既有 PostgreSQL / Kafka / 業務服務完全隔離，單獨啟停不影響主系統。
+> 本專案以 SQL Server（Azure SQL Edge）為主資料庫。
 
 ```bash
 make mssql-up      # 拉 image → 啟動 SQL Server → 自動建空 DB AOIOpsPlatform_MSSQL
@@ -179,7 +179,7 @@ aoi-ops-platform/
     domain-profiles/    pcb.json / semiconductor.json（同 schema 不同產業用語）
   infra/
     docker/             docker-compose.yml + healthcheck
-    db/init/            PostgreSQL 初始化 SQL
+    db/mssql-init/      SQL Server 初始化 SQL
   docs/                 architecture / realtime-signalr / domain-profile / traceability...
   scripts/              開發用 seed / smoke / 一鍵啟動
 ```

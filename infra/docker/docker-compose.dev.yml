@@ -1,0 +1,27 @@
+services:
+  backend:
+    # Dev override：讓 backend 在容器內用 dotnet watch 跑原始碼，解決「改 C# 還要一直 docker build」的痛點。
+    # 為什麼不直接改主 compose：主 compose 偏「可交付/接近部署」模式（publish 後跑 runtime image）；
+    # dev 模式需要檔案監聽、快速迭代，兩者目標不同，分檔覆寫比較不互相干擾。
+    # 注意：repo 有 global.json 鎖定 SDK=8.0.420；dev 容器必須用相同版本，否則 dotnet 會拒絕執行。
+    image: mcr.microsoft.com/dotnet/sdk:8.0.420
+    build: null
+    working_dir: /src/backend/src/Api
+    volumes:
+      # 掛整個 repo：讓 backend 可以直接讀到 src 與 shared/domain-profiles
+      - ../../:/src
+      # 讓容器內的 restore/build 快取在 volume，避免每次重啟都重抓 NuGet（加速 dev）
+      - aoiops_nuget_cache:/root/.nuget/packages
+    environment:
+      # dotnet watch 在 Docker Desktop（macOS/Windows）常需要 polling 才能穩定偵測檔案變更
+      - DOTNET_USE_POLLING_FILE_WATCHER=1
+      # 讓 Kestrel 綁 0.0.0.0，才能被 host 透過 port mapping 訪問
+      - ASPNETCORE_URLS=http://0.0.0.0:8080
+      # 開發模式用 watch，比較需要完整錯誤資訊
+      - ASPNETCORE_ENVIRONMENT=Development
+    command: >
+      bash -lc "dotnet restore &&
+      dotnet watch run --no-hot-reload --urls http://0.0.0.0:8080"
+
+volumes:
+  aoiops_nuget_cache:

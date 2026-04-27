@@ -37,14 +37,14 @@
 | Python `kafka-influx-writer` | Kafka `aoi.inspection.raw` | InfluxDB（時序）|
 | Python `kafka-rabbitmq-publisher` | Kafka `aoi.defect.event` | RabbitMQ alert / workorder |
 | .NET `SpcRealtimeWorker` | Kafka `aoi.inspection.raw` | SignalR `/hubs/spc`（即時 SPC 點 + 違規）|
-| .NET `AlarmRabbitWorker` | RabbitMQ `alert` | PostgreSQL `alarms` + SignalR `/hubs/alarm` |
-| .NET `WorkorderRabbitWorker` | RabbitMQ `workorder` | PostgreSQL `workorders` + SignalR `/hubs/workorder` |
+| .NET `AlarmRabbitWorker` | RabbitMQ `alert` | SQL Server `alarms` + SignalR `/hubs/alarm` |
+| .NET `WorkorderRabbitWorker` | RabbitMQ `workorder` | SQL Server `workorders` + SignalR `/hubs/workorder` |
 
 > .NET 是「唯一」對前端 push 的入口；Python workers 只負責落地（時序 / 業務寫入），不直接面對前端，避免 CORS 雙頭管理。
 
 ### 4) 儲存層
 
-- **PostgreSQL**：業務資料（lot / wafer / panel / 物料 / 工單 / 異常）
+- **SQL Server（Azure SQL Edge）**：業務資料（lot / wafer / panel / 物料 / 工單 / 異常）
 - **InfluxDB**：時序資料（機台心跳 / 良率趨勢）
 
 ### 5) Core Backend（C# / ASP.NET Core 8）
@@ -72,7 +72,7 @@
 
 ### 8) Infra
 
-Docker Compose 一鍵拉起：PostgreSQL / InfluxDB / Kafka / RabbitMQ / 後端 / 前端 / Python services。
+Docker Compose 一鍵拉起：SQL Server / InfluxDB / Kafka / RabbitMQ / 後端 / 前端 / Python services。
 
 ---
 
@@ -87,13 +87,13 @@ Docker Compose 一鍵拉起：PostgreSQL / InfluxDB / Kafka / RabbitMQ / 後端 
 
 ### 2) 工單管理
 
-- RabbitMQ `workorder` queue → .NET `WorkorderRabbitWorker` → PostgreSQL `workorders`
+- RabbitMQ `workorder` queue → .NET `WorkorderRabbitWorker` → SQL Server `workorders`
 - SignalR `/hubs/workorder` → 前端即時長新一行（高亮 1.5 秒）
 - REST：`GET /api/workorders?take=100` 預載歷史
 
 ### 3) 異常記錄
 
-- RabbitMQ `alert` queue → .NET `AlarmRabbitWorker` → PostgreSQL `alarms`
+- RabbitMQ `alert` queue → .NET `AlarmRabbitWorker` → SQL Server `alarms`
 - SignalR `/hubs/alarm` 即時推
 - 嚴重度 badge：critical / high / medium / low
 
@@ -120,7 +120,7 @@ Python  = 落地（時序 / 業務寫入），不直接面對前端
 
 ---
 
-## 四、資料表（PostgreSQL）
+## 四、資料表（SQL Server）
 
 ```
 tools / lots / wafers（含 panel_no） / recipes / process_runs
@@ -174,7 +174,7 @@ docs/
 | RabbitMQ（AMQP） | 業務事件分級路由（alert / workorder） |
 | Python（FastAPI） | 模擬器、Kafka 消費端、批次 SPC 報表 |
 | InfluxDB | 時序：機台心跳、良率趨勢 |
-| PostgreSQL | 業務資料、SPC 計算來源、物料追溯 |
+| SQL Server（Azure SQL Edge） | 業務資料、SPC 計算來源、物料追溯 |
 | React + TypeScript | 4 大頁，SignalR 即時推播 |
 | Domain Profile JSON | 同 codebase 切換不同產業 demo |
 | Docker Compose | 一鍵啟動 |

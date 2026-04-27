@@ -11,13 +11,14 @@
 #   make smoke                     # 打幾個關鍵 API，確認骨架活著
 
 COMPOSE      := docker compose -p aoiops -f infra/docker/docker-compose.yml
+COMPOSE_DEV  := docker compose -p aoiops -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml
 DOMAIN_PROFILE ?= pcb
 SIM_SCENARIO ?= normal
 
 export DOMAIN_PROFILE
 export SIM_SCENARIO
 
-.PHONY: up down restart seed smoke logs ps profile-pcb profile-semiconductor scenario-normal scenario-drift scenario-spike scenario-misjudge mssql-up mssql-down mssql-shell help
+.PHONY: up down restart seed smoke logs ps profile-pcb profile-semiconductor scenario-normal scenario-drift scenario-spike scenario-misjudge mssql-up mssql-down mssql-shell dev-up dev-down dev-restart dev-logs help
 
 help:  ## 顯示可用指令
 	@echo "AOI Ops Platform — make targets"
@@ -29,6 +30,11 @@ help:  ## 顯示可用指令
 	@echo "  make smoke        # 對 backend 打幾個關鍵 API"
 	@echo "  make logs         # 跟 backend log（Ctrl-C 退出）"
 	@echo "  make ps           # 看容器狀態"
+	@echo ""
+	@echo "  make dev-up       # dev 模式：backend 用 dotnet watch（改 C# 不用 rebuild）"
+	@echo "  make dev-down"
+	@echo "  make dev-restart"
+	@echo "  make dev-logs     # dev 模式下跟 backend log"
 	@echo ""
 	@echo "  make profile-pcb           # 切到 PCB profile（重啟 backend / frontend）"
 	@echo "  make profile-semiconductor # 切到半導體 profile"
@@ -42,7 +48,7 @@ up:  ## 啟動所有容器
 	@echo ">>   spc-service    : http://localhost:8001  (FastAPI 批次/歷史)"
 	@echo ">>   rabbitmq mgmt  : http://localhost:15672 (guest/guest)"
 	@echo ">>   influxdb UI    : http://localhost:8086"
-	@echo ">>   postgres       : localhost:5432         (postgres/postgres)"
+	@echo ">>   sqlserver      : localhost:1433         (sa/Your_password123!)"
 
 down:  ## 關掉所有容器（保留 volume）
 	$(COMPOSE) down
@@ -51,13 +57,21 @@ restart:  ## 完全 down + up（不清 volume）
 	$(COMPOSE) down
 	$(COMPOSE) up -d
 
-seed:  ## 砍掉 volume 重新跑 init script，重建一份乾淨的 DB
+seed:  ## 重建 SQL Server（清空 volume → 重新建 DB + schema + seed）
+	@# 防呆：這個 target 會「刪掉 SQL Server volume」，等同把 AOIOpsPlatform_MSSQL 整個 DB 重置（資料全消失）。
+	@# 為什麼要這樣做：用乾淨 DB 讓 demo/開發環境可重現，避免每次手動清表造成不一致。
+	@# 如何執行：需要顯式確認才會真的刪資料，避免手滑（make seed CONFIRM=YES）。
+	@if [ "$(CONFIRM)" != "YES" ]; then \
+	  echo "!! DANGER: 這會刪除 SQL Server volume：aoiops_aoiops_mssql_data（資料庫與所有資料會消失）"; \
+	  echo "!! 若你確定要重置 DB，請改用：make seed CONFIRM=YES"; \
+	  exit 1; \
+	fi
 	$(COMPOSE) down
-	docker volume rm aoiops_aoiops_postgres_data 2>/dev/null || true
-	$(COMPOSE) up -d db
-	@echo ">> 等待 postgres healthcheck 通過..."
+	docker volume rm aoiops_aoiops_mssql_data 2>/dev/null || true
+	$(COMPOSE) up -d mssql mssql-init
+	@echo ">> 等待 sqlserver healthcheck 通過..."
 	@for i in $$(seq 1 30); do \
-	  status=$$(docker inspect --format '{{.State.Health.Status}}' aoiops-db-1 2>/dev/null || echo missing); \
+	  status=$$(docker inspect --format '{{.State.Health.Status}}' aoiops-mssql-1 2>/dev/null || echo missing); \
 	  if [ "$$status" = "healthy" ]; then echo ">> DB healthy"; break; fi; \
 	  echo "    ... ($$i) status=$$status"; sleep 2; \
 	done
@@ -89,6 +103,23 @@ logs:  ## 跟 backend log
 ps:  ## 看容器狀態
 	$(COMPOSE) ps
 
+# ── Dev 模式（重點：backend 不需要一直 docker build）──
+# 為什麼需要 dev-up：
+# - 正式 compose 的 backend 是 publish 後跑 runtime image，改 C# 需要 rebuild image 才會生效。
+# - dev compose 覆寫成 dotnet watch + 掛載原始碼，讓「改 code 立刻刷新」。
+dev-up:  ## dev 模式啟動（backend=dotnet watch）
+	$(COMPOSE_DEV) up -d
+
+dev-down:  ## dev 模式關閉（保留 volume）
+	$(COMPOSE_DEV) down
+
+dev-restart:  ## dev 模式重啟（不清 volume）
+	$(COMPOSE_DEV) down
+	$(COMPOSE_DEV) up -d
+
+dev-logs:  ## dev 模式跟 backend log
+	$(COMPOSE_DEV) logs -f backend
+
 profile-pcb:  ## 切換成 PCB profile（重啟 backend / frontend）
 	DOMAIN_PROFILE=pcb $(COMPOSE) up -d --force-recreate backend frontend
 	@echo ">> 已切換到 PCB profile"
@@ -113,7 +144,7 @@ scenario-misjudge:
 
 # ── SQL Server（Azure SQL Edge / ARM64 原生）便利 target ──
 # 為什麼獨立成 mssql-up / mssql-down 而非塞進 up / down：
-# - mssql 對既有 postgres / kafka / 業務服務「沒有任何相依」，是獨立的孤島，
+# - mssql 對既有 kafka / 業務服務「沒有任何相依」，是獨立的孤島，
 #   因此給選用者單獨開關即可，避免每個人都被迫多吃一份 SQL Server 記憶體。
 # - mssql-shell 用來快速進 sqlcmd 排查；若密碼有改，從環境變數 MSSQL_SA_PASSWORD 讀取，
 #   保留預設 fallback 與 .env.example 一致，避免新成員忘了 export 而打不進去。

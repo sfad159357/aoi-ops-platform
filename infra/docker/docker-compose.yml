@@ -1,23 +1,31 @@
 services:
-  db:
-    image: postgres:16-alpine
+  # ── SQL Server（Apple Silicon 原生 ARM64 用 Azure SQL Edge）──
+  # 為什麼用 azure-sql-edge 而非官方 mssql/server：
+  # - 官方 mcr.microsoft.com/mssql/server 只發 amd64 image，在 M1/M2 走 Rosetta 模擬，
+  #   常因預設 SQL Server 記憶體配置 + 模擬器開銷直接 OOM 退出。
+  # - azure-sql-edge 是 Microsoft 官方為 ARM64 出的精簡版，原生跑在 M1，記憶體佔用低、
+  #   T-SQL 約 95% 相容，作為 dev / demo 後端足夠。
+  mssql:
+    image: mcr.microsoft.com/azure-sql-edge:latest
     restart: unless-stopped
     environment:
-      # 開發環境用單一帳密；上線請改用 secret 管理。
-      - POSTGRES_DB=AOIOpsPlatform
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      # SA 密碼必須符合複雜度（≥8 chars、含大小寫/數字/符號），預設沿用 .env.example
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=${MSSQL_SA_PASSWORD:-Your_password123!}
+      - MSSQL_PID=Developer
     ports:
-      - "5432:5432"
+      - "1433:1433"
     volumes:
-      - aoiops_postgres_data:/var/lib/postgresql/data
-      # 第一次啟動時自動跑 init script（資料卷全新時才會跑）
-      - ../db/init:/docker-entrypoint-initdb.d:ro
+      - aoiops_mssql_data:/var/opt/mssql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 10s
+      # 為什麼用 bash + /dev/tcp 而非 sqlcmd：
+      # - 新版 azure-sql-edge (latest) 為了精簡，已不再內建 sqlcmd；
+      # - 用 bash /dev/tcp 做 TCP readiness，等待 1433 可連線即可。
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/1433' 2>/dev/null"]
+      interval: 15s
       timeout: 10s
       retries: 20
+      start_period: 30s
 
   kafka:
     # 官方 Apache Kafka image，避免第三方 tag 不存在
@@ -95,40 +103,8 @@ services:
       retries: 10
       start_period: 15s
 
-  # ── 新增：SQL Server（Apple Silicon 原生 ARM64 用 Azure SQL Edge）──
-  # 為什麼用 azure-sql-edge 而非官方 mssql/server：
-  # - 官方 mcr.microsoft.com/mssql/server 只發 amd64 image，在 M1/M2 走 Rosetta 模擬，
-  #   常因預設 SQL Server 記憶體配置 + 模擬器開銷直接 OOM 退出（之前建置失敗的根因）。
-  # - azure-sql-edge 是 Microsoft 官方為 ARM64 出的精簡版，原生跑在 M1，記憶體佔用低、
-  #   T-SQL 約 95% 相容，作為 dev / demo 後端足夠。
-  # 此服務「不被任何既存 service depends_on」，crash loop 不會 cascade 到 postgres/backend。
-  mssql:
-    image: mcr.microsoft.com/azure-sql-edge:latest
-    restart: unless-stopped
-    environment:
-      # SA 密碼必須符合複雜度（≥8 chars、含大小寫/數字/符號），預設沿用 .env.example
-      - ACCEPT_EULA=Y
-      - MSSQL_SA_PASSWORD=${MSSQL_SA_PASSWORD:-Your_password123!}
-      - MSSQL_PID=Developer
-    ports:
-      - "1433:1433"
-    volumes:
-      - aoiops_mssql_data:/var/opt/mssql
-    healthcheck:
-      # 為什麼用 bash + /dev/tcp 而非 sqlcmd：
-      # - 新版 azure-sql-edge (latest) 為了精簡，**已不再內建 sqlcmd**（舊版 1.0.7 才有），
-      #   container 內找不到 /opt/mssql-tools/bin/sqlcmd 導致 healthcheck 永遠 starting。
-      # - bash 內建的 /dev/tcp/<host>/<port> 偽裝置可在不依賴外部工具下做 TCP 探測；
-      #   配合 start_period=30s 等 SQL engine 完成 master DB 初始化後才開放接 query，
-      #   實務上 port 1433 listen = engine ready 已足夠當 readiness 訊號。
-      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/1433' 2>/dev/null"]
-      interval: 15s
-      timeout: 10s
-      retries: 20
-      start_period: 30s
-
-  # ── 新增：mssql 一次性 init sidecar ──
-  # 為什麼獨立 sidecar：azure-sql-edge 沒有 postgres 那種 /docker-entrypoint-initdb.d 機制，
+  # ── mssql 一次性 init sidecar ──
+  # 為什麼獨立 sidecar：azure-sql-edge 沒有內建「啟動時自動執行 init SQL 資料夾」的機制，
   # 用一次性容器在 mssql healthy 之後執行建表 SQL，跑完即退出（restart: "no"），不佔資源。
   #
   # 為什麼用 mcr.microsoft.com/mssql-tools 而非 azure-sql-edge：
@@ -159,10 +135,11 @@ services:
       # 為了讓 container 對外提供 HTTP，避免 https redirection 在 dev 被卡住
       - ASPNETCORE_ENVIRONMENT=Development
       # DB provider 切換：
-      # - 預設仍保留 PostgreSQL（不影響既有環境）
-      # - 若要讓 backend 改連 SQL Server：設定 Database__Provider=sqlserver，並把 ConnectionStrings__Default 改成 SQL Server 連線字串
-      - Database__Provider=${DB_PROVIDER:-postgres}
-      - ConnectionStrings__Default=${DB_CONNECTION:-Host=db;Port=5432;Database=AOIOpsPlatform;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres};}
+      # - 目前專案以 SQL Server 為主資料庫
+      # - 若要覆蓋（例如測試不同環境），可設定 Database__Provider/ConnectionStrings__Default
+      # 目前專案以 SQL Server 為主資料庫，因此預設 provider=sqlserver、連線指向 mssql service。
+      - Database__Provider=${DB_PROVIDER:-sqlserver}
+      - ConnectionStrings__Default=${DB_CONNECTION:-Server=mssql,1433;Database=AOIOpsPlatform_MSSQL;User Id=sa;Password=${MSSQL_SA_PASSWORD:-Your_password123!};TrustServerCertificate=True;}
       # 為什麼在 docker 內不能用 localhost：
       # - container 的 localhost 指向自己，不是 kafka/rabbitmq 容器；
       # - appsettings.Development.json 會把 bootstrap/hostname 覆蓋成 localhost（給本機開發用），
@@ -176,7 +153,7 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      db:
+      mssql:
         condition: service_healthy
       kafka:
         condition: service_healthy
@@ -224,13 +201,13 @@ services:
       - KAFKA_TOPIC_INSPECTION=aoi.inspection.raw
       - KAFKA_TOPIC_DEFECT=aoi.defect.event
       - KAFKA_CONSUMER_GROUP=aoiops-ingestion-writer
-      # DB provider 切換（與 backend 同規格）：預設 postgres；要切 SQL Server 請覆蓋 DB_PROVIDER/DB_CONNECTION
-      - DB_PROVIDER=${DB_PROVIDER:-postgres}
-      - DB_CONNECTION=${DB_CONNECTION:-Host=db;Port=5432;Database=AOIOpsPlatform;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres};}
+      # DB provider 切換（與 backend 同規格）：目前專案預設 sqlserver
+      - DB_PROVIDER=${DB_PROVIDER:-sqlserver}
+      - DB_CONNECTION=${DB_CONNECTION:-Server=mssql,1433;Database=AOIOpsPlatform_MSSQL;User Id=sa;Password=${MSSQL_SA_PASSWORD:-Your_password123!};TrustServerCertificate=True;}
       # W11 假資料情境：normal|drift|spike|misjudge
       - SIM_SCENARIO=${SIM_SCENARIO:-normal}
     depends_on:
-      db:
+      mssql:
         condition: service_healthy
       kafka:
         condition: service_healthy
@@ -251,10 +228,10 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       # DB provider 切換（與 backend 同規格）
-      - DB_PROVIDER=${DB_PROVIDER:-postgres}
-      - DB_CONNECTION=${DB_CONNECTION:-Host=db;Port=5432;Database=AOIOpsPlatform;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres};}
+      - DB_PROVIDER=${DB_PROVIDER:-sqlserver}
+      - DB_CONNECTION=${DB_CONNECTION:-Server=mssql,1433;Database=AOIOpsPlatform_MSSQL;User Id=sa;Password=${MSSQL_SA_PASSWORD:-Your_password123!};TrustServerCertificate=True;}
     depends_on:
-      db:
+      mssql:
         condition: service_healthy
       backend:
         condition: service_started
@@ -326,9 +303,10 @@ services:
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
       - RABBITMQ_QUEUE_ALERT=alert
       - RABBITMQ_QUEUE_WORKORDER=workorder
-      - DB_CONNECTION=Host=db;Port=5432;Database=AOIOpsPlatform;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres};
+      # legacy service：若未來要啟用，需另行確認 SQL Server schema/查詢相容性
+      - DB_CONNECTION=Server=mssql,1433;Database=AOIOpsPlatform_MSSQL;User Id=sa;Password=${MSSQL_SA_PASSWORD:-Your_password123!};TrustServerCertificate=True;
     depends_on:
-      db:
+      mssql:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
@@ -337,9 +315,8 @@ services:
       python -m app"
 
 volumes:
-  aoiops_postgres_data:
   aoiops_kafka_data:
   aoiops_rabbitmq_data:
   aoiops_influxdb_data:
-  # 新增：SQL Server 資料 volume（隔離於現有 postgres volume，互不干擾）
+  # SQL Server 資料 volume
   aoiops_mssql_data:

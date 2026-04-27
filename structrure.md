@@ -108,8 +108,8 @@ aoi-ops-platform/
 
   infra/
     docker/
-      docker-compose.yml        ← PostgreSQL / InfluxDB / Kafka / RabbitMQ / backend / frontend / python services
-    db/init/                    ← Postgres init script
+      docker-compose.yml        ← SQL Server / InfluxDB / Kafka / RabbitMQ / backend / frontend / python services
+    db/mssql-init/              ← SQL Server init script（建 AOIOpsPlatform_MSSQL）
     rabbitmq/                   ← rabbitmq.conf / definitions.json
     influxdb/                   ← influxdb 初始設定
     kafka/                      ← KRaft mode
