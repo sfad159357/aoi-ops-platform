@@ -32,22 +32,23 @@ public sealed class HealthController : ControllerBase
     {
         var canConnect = await _db.Database.CanConnectAsync(cancellationToken);
 
-        // EF Core 8 的 SqlQuery<T> 會把你的 SQL 包成子查詢（FROM (your_sql) AS t）。
-        // 如果 SQL 結尾有分號「;」，PostgreSQL 的語法解析會爆 42601 syntax error。
-        // 解決方法：移除結尾分號，讓 EF Core 自行決定 SQL 邊界。
-        // 欄位命名為 "Value" 是因為 SqlQuery<bool> scalar projection 需要對應欄位名稱。
-        FormattableString sql = $"""
-                                 select exists (
-                                   select 1
-                                   from information_schema.tables
-                                   where table_schema = 'public'
-                                     and table_name = {"tools"}
-                                 ) as "Value"
-                                 """;
-
-        var toolsTableExists = await _db.Database
-            .SqlQuery<bool>(sql)
-            .FirstOrDefaultAsync(cancellationToken);
+        // 為什麼不再查 information_schema：
+        // - 先前這支 healthcheck 寫死 Postgres 的 table_schema='public'，
+        //   一旦改用 SQL Server（預設 dbo）就會「不報錯但永遠回 false」，造成誤判。
+        //
+        // 這裡改用 ORM 本身的 query 當作 schema readiness：
+        // - 若 schema 未建立，AnyAsync 會拋例外；我們捕捉後回 false，並保留 canConnect 供判斷是連線問題還是 schema 問題。
+        // - 這樣能讓 healthcheck 在不同 provider 上行為一致（不綁死特定 DB 的 metadata schema）。
+        var toolsTableExists = false;
+        try
+        {
+            // 為什麼用 Take(1) + AnyAsync：最小成本觸發查詢，不依賴 seed 是否存在。
+            toolsTableExists = await _db.Tools.AsNoTracking().Take(1).AnyAsync(cancellationToken);
+        }
+        catch
+        {
+            toolsTableExists = false;
+        }
 
         return Ok(new
         {

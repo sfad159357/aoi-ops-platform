@@ -158,7 +158,11 @@ services:
     environment:
       # 為了讓 container 對外提供 HTTP，避免 https redirection 在 dev 被卡住
       - ASPNETCORE_ENVIRONMENT=Development
-      - ConnectionStrings__Default=Host=db;Port=5432;Database=AOIOpsPlatform;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres};
+      # DB provider 切換：
+      # - 預設仍保留 PostgreSQL（不影響既有環境）
+      # - 若要讓 backend 改連 SQL Server：設定 Database__Provider=sqlserver，並把 ConnectionStrings__Default 改成 SQL Server 連線字串
+      - Database__Provider=${DB_PROVIDER:-postgres}
+      - ConnectionStrings__Default=${DB_CONNECTION:-Host=db;Port=5432;Database=AOIOpsPlatform;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres};}
       # 為什麼在 docker 內不能用 localhost：
       # - container 的 localhost 指向自己，不是 kafka/rabbitmq 容器；
       # - appsettings.Development.json 會把 bootstrap/hostname 覆蓋成 localhost（給本機開發用），

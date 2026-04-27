@@ -14,6 +14,8 @@
     <!-- Microsoft.EntityFrameworkCore 8.0.13 是 EF Core 8 的最新安全修補版本（存在於 NuGet）-->
     <!-- Npgsql 8.0.11 是 8.x 系列的最新版本（8.0.13 不存在，會被 NuGet 跳升到 9.x 造成衝突）-->
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.13" />
+    <!-- 為什麼 Infrastructure 也加 SqlServer provider：讓 DbContext 的 model 設定與 initializer 在測試/工具中也能切換 -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="8.0.13" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="8.0.1" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
     <PackageReference Include="Microsoft.Extensions.Options" Version="8.0.2" />

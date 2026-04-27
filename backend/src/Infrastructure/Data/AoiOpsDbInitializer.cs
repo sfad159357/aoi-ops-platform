@@ -40,99 +40,116 @@ public static class AoiOpsDbInitializer
         var created = await db.Database.EnsureCreatedAsync(cancellationToken);
         logger.LogInformation("Database EnsureCreated completed. Created={Created}", created);
 
+        // 為什麼需要區分 DB provider：
+        // - 這個 initializer 早期為了 MVP 快跑，用 raw SQL 做「舊資料卷的最小 schema patch」；
+        // - 但 raw SQL 內容是 PostgreSQL DDL（IF NOT EXISTS、uuid/timestamptz、gen_random_uuid 等），
+        //   換到 SQL Server 會直接語法不相容，造成啟動卡死/噴錯。
+        //
+        // 解決什麼問題：
+        // - 讓 PostgreSQL 既有環境仍能靠 patch 升級（不必 drop volume）
+        // - 同時允許 SQL Server 用全新空庫 + EnsureCreated 直接建立 schema（不執行 Postgres DDL）
+        var provider = db.Database.ProviderName?.ToLowerInvariant() ?? string.Empty;
+        var isPostgres = provider.Contains("npgsql");
+
         // 為什麼要做「最小 schema patch」：
         // - EnsureCreated 只在第一次建庫時生效；容器資料卷已存在時，不會自動補欄位；
         // - 本專案的 Traceability API 依賴 wafers.panel_no 作為可追溯的識別碼，
         //   若舊的資料卷沒有這欄位，會導致 /api/trace/panels/recent 直接 500（column does not exist）。
         // - 這裡用 IF NOT EXISTS 做安全升級，讓既有環境不中斷，同時不需要手動 drop volume。
-        await db.Database.ExecuteSqlRawAsync(
-            """
-            ALTER TABLE wafers
-            ADD COLUMN IF NOT EXISTS panel_no varchar(100) NULL;
-            """,
-            cancellationToken);
-        await db.Database.ExecuteSqlRawAsync(
-            """
-            CREATE UNIQUE INDEX IF NOT EXISTS ix_wafers_panel_no_notnull
-            ON wafers(panel_no)
-            WHERE panel_no IS NOT NULL;
-            """,
-            cancellationToken);
+        if (isPostgres)
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                """
+                ALTER TABLE wafers
+                ADD COLUMN IF NOT EXISTS panel_no varchar(100) NULL;
+                """,
+                cancellationToken);
+            await db.Database.ExecuteSqlRawAsync(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS ix_wafers_panel_no_notnull
+                ON wafers(panel_no)
+                WHERE panel_no IS NOT NULL;
+                """,
+                cancellationToken);
+        }
 
         // 為什麼要補齊 Traceability 三張表：
         // - 本專案早期用 EnsureCreated 建表，但「後來新增的表」不會出現在既有資料卷；
         // - 因此 /api/trace/panel/{panelNo} 在舊 DB 會直接噴 42P01（relation does not exist）。
         // - 用 CREATE TABLE IF NOT EXISTS 可以讓既有環境無痛升級，不必要求使用者 drop volume。
-        await db.Database.ExecuteSqlRawAsync(
-            """
-            CREATE TABLE IF NOT EXISTS material_lots (
-              id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-              material_lot_no varchar(100) NOT NULL,
-              material_type varchar(100) NOT NULL,
-              material_name varchar(200) NULL,
-              supplier varchar(200) NULL,
-              received_at timestamptz NULL,
-              created_at timestamptz NOT NULL DEFAULT now()
-            );
-            """,
-            cancellationToken);
-        await db.Database.ExecuteSqlRawAsync(
-            """
-            CREATE UNIQUE INDEX IF NOT EXISTS ix_material_lots_material_lot_no
-            ON material_lots(material_lot_no);
-            """,
-            cancellationToken);
-        await db.Database.ExecuteSqlRawAsync(
-            """
-            CREATE INDEX IF NOT EXISTS ix_material_lots_material_type
-            ON material_lots(material_type);
-            """,
-            cancellationToken);
+        if (isPostgres)
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                """
+                CREATE TABLE IF NOT EXISTS material_lots (
+                  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                  material_lot_no varchar(100) NOT NULL,
+                  material_type varchar(100) NOT NULL,
+                  material_name varchar(200) NULL,
+                  supplier varchar(200) NULL,
+                  received_at timestamptz NULL,
+                  created_at timestamptz NOT NULL DEFAULT now()
+                );
+                """,
+                cancellationToken);
+            await db.Database.ExecuteSqlRawAsync(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS ix_material_lots_material_lot_no
+                ON material_lots(material_lot_no);
+                """,
+                cancellationToken);
+            await db.Database.ExecuteSqlRawAsync(
+                """
+                CREATE INDEX IF NOT EXISTS ix_material_lots_material_type
+                ON material_lots(material_type);
+                """,
+                cancellationToken);
 
-        await db.Database.ExecuteSqlRawAsync(
-            """
-            CREATE TABLE IF NOT EXISTS panel_material_usage (
-              panel_id uuid NOT NULL,
-              material_lot_id uuid NOT NULL,
-              quantity numeric(18,4) NULL,
-              used_at timestamptz NULL,
-              PRIMARY KEY (panel_id, material_lot_id)
-            );
-            """,
-            cancellationToken);
-        await db.Database.ExecuteSqlRawAsync(
-            """
-            CREATE INDEX IF NOT EXISTS ix_panel_material_usage_material_lot_id
-            ON panel_material_usage(material_lot_id);
-            """,
-            cancellationToken);
+            await db.Database.ExecuteSqlRawAsync(
+                """
+                CREATE TABLE IF NOT EXISTS panel_material_usage (
+                  panel_id uuid NOT NULL,
+                  material_lot_id uuid NOT NULL,
+                  quantity numeric(18,4) NULL,
+                  used_at timestamptz NULL,
+                  PRIMARY KEY (panel_id, material_lot_id)
+                );
+                """,
+                cancellationToken);
+            await db.Database.ExecuteSqlRawAsync(
+                """
+                CREATE INDEX IF NOT EXISTS ix_panel_material_usage_material_lot_id
+                ON panel_material_usage(material_lot_id);
+                """,
+                cancellationToken);
 
-        await db.Database.ExecuteSqlRawAsync(
-            """
-            CREATE TABLE IF NOT EXISTS panel_station_log (
-              id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-              panel_id uuid NOT NULL,
-              station_code varchar(50) NOT NULL,
-              entered_at timestamptz NOT NULL,
-              exited_at timestamptz NULL,
-              result varchar(50) NULL,
-              operator varchar(100) NULL,
-              note varchar(2000) NULL
-            );
-            """,
-            cancellationToken);
-        await db.Database.ExecuteSqlRawAsync(
-            """
-            CREATE INDEX IF NOT EXISTS ix_panel_station_log_panel_id_entered_at
-            ON panel_station_log(panel_id, entered_at);
-            """,
-            cancellationToken);
-        await db.Database.ExecuteSqlRawAsync(
-            """
-            CREATE INDEX IF NOT EXISTS ix_panel_station_log_station_code
-            ON panel_station_log(station_code);
-            """,
-            cancellationToken);
+            await db.Database.ExecuteSqlRawAsync(
+                """
+                CREATE TABLE IF NOT EXISTS panel_station_log (
+                  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                  panel_id uuid NOT NULL,
+                  station_code varchar(50) NOT NULL,
+                  entered_at timestamptz NOT NULL,
+                  exited_at timestamptz NULL,
+                  result varchar(50) NULL,
+                  operator varchar(100) NULL,
+                  note varchar(2000) NULL
+                );
+                """,
+                cancellationToken);
+            await db.Database.ExecuteSqlRawAsync(
+                """
+                CREATE INDEX IF NOT EXISTS ix_panel_station_log_panel_id_entered_at
+                ON panel_station_log(panel_id, entered_at);
+                """,
+                cancellationToken);
+            await db.Database.ExecuteSqlRawAsync(
+                """
+                CREATE INDEX IF NOT EXISTS ix_panel_station_log_station_code
+                ON panel_station_log(station_code);
+                """,
+                cancellationToken);
+        }
 
         // Seed（開發用假資料）
         // 為什麼要在開發環境 seed：

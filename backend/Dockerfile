@@ -22,7 +22,12 @@ RUN dotnet restore backend/src/Api/AOIOpsPlatform.Api.csproj
 COPY backend/ backend/
 COPY shared/ shared/
 
-RUN dotnet publish backend/src/Api/AOIOpsPlatform.Api.csproj -c Release -o /app/publish --no-restore
+# 為什麼不再用 --no-restore：
+# - 本專案會隨著開發新增/調整 NuGet 套件（例如加入 SqlServer provider），
+#   在某些 Docker build cache/restore layer 的狀態下，publish 階段可能出現「已 restore 但 publish 找不到套件」
+#   的 NETSDK1064（常見於 analyzers 套件）。
+# - 這裡改成在 publish 讓 dotnet 自行確保 restore 完整，換取可重現性與更穩定的容器建置。
+RUN dotnet publish backend/src/Api/AOIOpsPlatform.Api.csproj -c Release -o /app/publish
 
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app

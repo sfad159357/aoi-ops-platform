@@ -14,6 +14,8 @@
     </PackageReference>
     <!-- Npgsql 8.0.11 是目前 8.x 最新版，與 EF Core 8.0.13 相容；8.0.13 版本不存在 -->
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.11" />
+    <!-- 為什麼同時參考 SqlServer provider：讓開發環境可以用設定切換 DB，不需要改程式碼或重編譯 -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="8.0.13" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
     <!-- W11：Serilog 結構化日誌（JSON），方便日後接 Loki / ELK 蒐集 -->
     <PackageReference Include="Serilog.AspNetCore" Version="8.0.3" />
