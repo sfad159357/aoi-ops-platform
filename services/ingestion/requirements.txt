@@ -1,2 +1,6 @@
 kafka-python>=2.0.2
 psycopg[binary]>=3.1.18
+# 為什麼新增 python-tds（pytds）：
+# - psycopg 只能連 PostgreSQL；本專案第二步要讓 ingestion writer 也能寫入 SQL Server（Azure SQL Edge）
+# - pytds 是純 Python 的 TDS driver（DB-API），在 Apple Silicon 的 linux/arm64 容器不需額外安裝 ODBC driver
+python-tds>=1.15.0

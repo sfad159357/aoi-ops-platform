@@ -3,3 +3,7 @@ uvicorn[standard]>=0.29.0
 numpy>=1.24.0
 pydantic>=2.5.0
 psycopg[binary]>=3.1.18
+# 為什麼新增 python-tds（pytds）：
+# - 本服務原先只支援 PostgreSQL（psycopg3）；第二步要讓 Live 端點也能讀 SQL Server
+# - pytds 是純 Python 的 SQL Server driver（TDS），在 docker linux/arm64 上不需要額外 OS 套件
+python-tds>=1.15.0

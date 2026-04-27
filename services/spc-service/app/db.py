@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 import psycopg
+import pytds
 
 
 MetricField = Literal["temperature", "pressure", "yield_rate"]
@@ -111,6 +112,68 @@ def _normalize_conninfo(conn: str) -> str:
     return " ".join(items)
 
 
+def _db_provider() -> str:
+    """
+    取得 DB provider。
+
+    為什麼要有這個判斷：
+    - 本專案第一階段用 PostgreSQL（psycopg）；第二階段要讓 SPC Service Live 端點也能讀 SQL Server。
+    - 透過 env `DB_PROVIDER=postgres|sqlserver` 讓 docker-compose 不改程式碼就能切換。
+    """
+    return (os.getenv("DB_PROVIDER") or "postgres").strip().lower()
+
+
+@dataclass(frozen=True)
+class _SqlServerConn:
+    host: str
+    port: int
+    database: str
+    user: str
+    password: str
+
+
+def _parse_sqlserver_conn_str(conn: str) -> _SqlServerConn:
+    """
+    解析 SQL Server 的 .NET ConnectionString。
+
+    例：
+      Server=mssql,1433;Database=AOIOpsPlatform_MSSQL;User Id=sa;Password=...;
+
+    為什麼要 parse：
+    - 本服務改用 pytds（純 Python），不需要容器內安裝 ODBC driver；
+    - 但 pytds connect 需要 host/port/database/user/password 拆開。
+    """
+    s = conn.strip().rstrip(";")
+    kv: dict[str, str] = {}
+    for p in [x for x in s.split(";") if x.strip()]:
+        if "=" not in p:
+            continue
+        k, v = p.split("=", 1)
+        kv[k.strip().lower()] = v.strip()
+
+    server = kv.get("server") or kv.get("data source") or kv.get("addr") or kv.get("address") or kv.get("network address")
+    if not server:
+        raise RuntimeError("SQL Server connection string 缺少 Server=... 欄位")
+
+    host = server
+    port = 1433
+    if "," in server:
+        host, port_s = server.split(",", 1)
+        host = host.strip()
+        port = int(port_s.strip())
+
+    database = kv.get("database") or kv.get("initial catalog")
+    user = kv.get("user id") or kv.get("uid") or kv.get("username") or kv.get("user")
+    password = kv.get("password") or kv.get("pwd")
+
+    if not database:
+        raise RuntimeError("SQL Server connection string 缺少 Database=... 欄位")
+    if not user or not password:
+        raise RuntimeError("SQL Server connection string 缺少 User Id / Password 欄位")
+
+    return _SqlServerConn(host=host, port=port, database=database, user=user, password=password)
+
+
 def list_tools() -> list[dict]:
     """
     取得工具清單（tool_code/tool_name）。
@@ -125,10 +188,19 @@ def list_tools() -> list[dict]:
     ORDER BY tool_code
     """
 
-    with psycopg.connect(_get_db_conn_str()) as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql)
-            rows = cur.fetchall()
+    provider = _db_provider()
+    if provider in ("sqlserver", "mssql"):
+        raw = os.getenv("DB_CONNECTION") or ""
+        c = _parse_sqlserver_conn_str(raw)
+        with pytds.connect(c.host, database=c.database, user=c.user, password=c.password, port=c.port) as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                rows = cur.fetchall()
+    else:
+        with psycopg.connect(_get_db_conn_str()) as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                rows = cur.fetchall()
 
     return [{"tool_code": r[0], "tool_name": r[1]} for r in rows]
 
@@ -177,7 +249,19 @@ def fetch_process_run_metric(
     # 如果沒有 tool_code，就 where 會是空字串；此時上面的 AND 會語法錯
     # 因此我們分兩種 SQL 生成（避免在字串拼接上踩坑）。
     if tool_code:
-        sql = f"""
+        # SQL Server 不支援 LIMIT，改用 TOP
+        if _db_provider() in ("sqlserver", "mssql"):
+            sql = f"""
+            SELECT TOP (%s) pr.run_start_at, pr.{column}
+            FROM process_runs pr
+            LEFT JOIN tools t ON t.id = pr.tool_id
+            WHERE t.tool_code = %s
+              AND pr.{column} IS NOT NULL
+            ORDER BY pr.run_start_at DESC
+            """
+            params = [limit, tool_code]
+        else:
+            sql = f"""
         SELECT pr.run_start_at, pr.{column}
         FROM process_runs pr
         LEFT JOIN tools t ON t.id = pr.tool_id
@@ -186,21 +270,39 @@ def fetch_process_run_metric(
         ORDER BY pr.run_start_at DESC
         LIMIT %s
         """
+            params = [tool_code, limit]
     else:
-        sql = f"""
+        if _db_provider() in ("sqlserver", "mssql"):
+            sql = f"""
+            SELECT TOP (%s) pr.run_start_at, pr.{column}
+            FROM process_runs pr
+            WHERE pr.{column} IS NOT NULL
+            ORDER BY pr.run_start_at DESC
+            """
+            params = [limit]
+        else:
+            sql = f"""
         SELECT pr.run_start_at, pr.{column}
         FROM process_runs pr
         WHERE pr.{column} IS NOT NULL
         ORDER BY pr.run_start_at DESC
         LIMIT %s
         """
+            params = [limit]
 
-    params.append(limit)
-
-    with psycopg.connect(_get_db_conn_str()) as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, params)
-            rows = cur.fetchall()
+    provider = _db_provider()
+    if provider in ("sqlserver", "mssql"):
+        raw = os.getenv("DB_CONNECTION") or ""
+        c = _parse_sqlserver_conn_str(raw)
+        with pytds.connect(c.host, database=c.database, user=c.user, password=c.password, port=c.port) as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                rows = cur.fetchall()
+    else:
+        with psycopg.connect(_get_db_conn_str()) as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                rows = cur.fetchall()
 
     # 回傳需要「時間由舊到新」的序列，SPC 才能正確偵測趨勢規則
     rows = list(reversed(rows))

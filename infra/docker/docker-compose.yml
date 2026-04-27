@@ -224,7 +224,9 @@ services:
       - KAFKA_TOPIC_INSPECTION=aoi.inspection.raw
       - KAFKA_TOPIC_DEFECT=aoi.defect.event
       - KAFKA_CONSUMER_GROUP=aoiops-ingestion-writer
-      - DB_CONNECTION=Host=db;Port=5432;Database=AOIOpsPlatform;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres};
+      # DB provider 切換（與 backend 同規格）：預設 postgres；要切 SQL Server 請覆蓋 DB_PROVIDER/DB_CONNECTION
+      - DB_PROVIDER=${DB_PROVIDER:-postgres}
+      - DB_CONNECTION=${DB_CONNECTION:-Host=db;Port=5432;Database=AOIOpsPlatform;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres};}
       # W11 假資料情境：normal|drift|spike|misjudge
       - SIM_SCENARIO=${SIM_SCENARIO:-normal}
     depends_on:
@@ -232,6 +234,9 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+      # 為什麼依賴 backend：SQL Server 模式下 schema 由 backend EnsureCreated 建立；先讓 backend 起來避免 ingestion 寫入時表不存在。
+      backend:
+        condition: service_started
     command: >
       bash -lc "pip install -r requirements.txt &&
       python -m app"
@@ -245,10 +250,14 @@ services:
       - ../../:/src
     environment:
       - PYTHONUNBUFFERED=1
-      - DB_CONNECTION=Host=db;Port=5432;Database=AOIOpsPlatform;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres};
+      # DB provider 切換（與 backend 同規格）
+      - DB_PROVIDER=${DB_PROVIDER:-postgres}
+      - DB_CONNECTION=${DB_CONNECTION:-Host=db;Port=5432;Database=AOIOpsPlatform;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres};}
     depends_on:
       db:
         condition: service_healthy
+      backend:
+        condition: service_started
     ports:
       - "8001:8001"
     command: >

@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import psycopg
+import pytds
 from kafka import KafkaConsumer, KafkaProducer
 from kafka.errors import KafkaTimeoutError, NoBrokersAvailable
 
@@ -123,6 +124,73 @@ def _normalize_conninfo(conn: str) -> str:
     return " ".join(items) if items else s
 
 
+@dataclass(frozen=True)
+class _SqlServerConn:
+    host: str
+    port: int
+    database: str
+    user: str
+    password: str
+
+
+def _db_provider() -> str:
+    """
+    取得 DB provider。
+
+    為什麼要有這個判斷：
+    - 本專案第一階段用 PostgreSQL（psycopg）；第二階段要支援 SQL Server（Azure SQL Edge）。
+    - 透過 env `DB_PROVIDER=postgres|sqlserver` 讓 docker-compose 不改程式碼就能切換。
+    """
+    return _env("DB_PROVIDER", "postgres").strip().lower()
+
+
+def _parse_sqlserver_conn_str(conn: str) -> _SqlServerConn:
+    """
+    解析 SQL Server 的 .NET ConnectionString。
+
+    支援格式：
+    - Server=mssql,1433;Database=AOIOpsPlatform_MSSQL;User Id=sa;Password=...;TrustServerCertificate=True;
+
+    為什麼要自己 parse：
+    - 我們選用 pytds（純 Python），避免在 linux/arm64 內裝 ODBC driver；
+    - 但 pytds 需要 host/port/database/user/password 拆開。
+    """
+    s = conn.strip().rstrip(";")
+    kv: dict[str, str] = {}
+    for p in [x for x in s.split(";") if x.strip()]:
+        if "=" not in p:
+            continue
+        k, v = p.split("=", 1)
+        kv[k.strip().lower()] = v.strip()
+
+    server = kv.get("server") or kv.get("data source") or kv.get("addr") or kv.get("address") or kv.get("network address")
+    if not server:
+        raise RuntimeError("SQL Server connection string 缺少 Server=... 欄位")
+
+    host = server
+    port = 1433
+    if "," in server:
+        host, port_s = server.split(",", 1)
+        host = host.strip()
+        port = int(port_s.strip())
+
+    database = kv.get("database") or kv.get("initial catalog") or kv.get("dbname") or kv.get("db")
+    user = kv.get("user id") or kv.get("uid") or kv.get("username") or kv.get("user")
+    password = kv.get("password") or kv.get("pwd")
+
+    if not database:
+        raise RuntimeError("SQL Server connection string 缺少 Database=... 欄位")
+    if not user or not password:
+        raise RuntimeError("SQL Server connection string 缺少 User Id / Password 欄位")
+
+    return _SqlServerConn(host=host, port=port, database=database, user=user, password=password)
+
+
+def _sql_now(provider: str) -> str:
+    # 為什麼抽出來：now() / SYSUTCDATETIME() 是 DB 方言差異，集中管理避免散落。
+    return "SYSUTCDATETIME()" if provider in ("sqlserver", "mssql") else "now()"
+
+
 def build_inspection_event(*, tool_code: str, lot_no: str, wafer_no: int) -> dict:
     """
     建立 inspection 事件（aoi.inspection.raw）。
@@ -202,55 +270,59 @@ def build_defect_event(*, tool_code: str, lot_no: str, severity: str) -> dict:
     }
 
 
-def _get_or_create_tool_id(cur: psycopg.Cursor, tool_code: str) -> str:
+def _get_or_create_tool_id(cur, tool_code: str, *, provider: str) -> str:
     cur.execute("SELECT id FROM tools WHERE tool_code = %s", (tool_code,))
     row = cur.fetchone()
     if row:
         return str(row[0])
     tool_id = str(uuid.uuid4())
     cur.execute(
-        """
+        f"""
         INSERT INTO tools (id, tool_code, tool_name, tool_type, status, location, created_at)
-        VALUES (%s, %s, %s, %s, %s, %s, now())
+        VALUES (%s, %s, %s, %s, %s, %s, {_sql_now(provider)})
         """,
         (tool_id, tool_code, f"{tool_code} (auto)", "AOI", "online", "FAB-1"),
     )
     return tool_id
 
 
-def _get_or_create_recipe_id(cur: psycopg.Cursor) -> str:
-    cur.execute("SELECT id FROM recipes ORDER BY created_at LIMIT 1")
+def _get_or_create_recipe_id(cur, *, provider: str) -> str:
+    # LIMIT 在 SQL Server 不存在，改用 TOP 1
+    if provider in ("sqlserver", "mssql"):
+        cur.execute("SELECT TOP 1 id FROM recipes ORDER BY created_at")
+    else:
+        cur.execute("SELECT id FROM recipes ORDER BY created_at LIMIT 1")
     row = cur.fetchone()
     if row:
         return str(row[0])
     recipe_id = str(uuid.uuid4())
     cur.execute(
-        """
+        f"""
         INSERT INTO recipes (id, recipe_code, recipe_name, version, description, created_at)
-        VALUES (%s, %s, %s, %s, %s, now())
+        VALUES (%s, %s, %s, %s, %s, {_sql_now(provider)})
         """,
         (recipe_id, "RCP-AUTO", "Auto Recipe", "v1", "Auto-created for ingestion"),
     )
     return recipe_id
 
 
-def _get_or_create_lot_id(cur: psycopg.Cursor, lot_no: str) -> str:
+def _get_or_create_lot_id(cur, lot_no: str, *, provider: str) -> str:
     cur.execute("SELECT id FROM lots WHERE lot_no = %s", (lot_no,))
     row = cur.fetchone()
     if row:
         return str(row[0])
     lot_id = str(uuid.uuid4())
     cur.execute(
-        """
+        f"""
         INSERT INTO lots (id, lot_no, product_code, quantity, start_time, end_time, status, created_at)
-        VALUES (%s, %s, %s, %s, now(), NULL, %s, now())
+        VALUES (%s, %s, %s, %s, {_sql_now(provider)}, NULL, %s, {_sql_now(provider)})
         """,
         (lot_id, lot_no, "PROD-A", 25, "in_progress"),
     )
     return lot_id
 
 
-def _get_or_create_wafer_id(cur: psycopg.Cursor, lot_id: str, lot_no: str, wafer_no: str) -> str:
+def _get_or_create_wafer_id(cur, lot_id: str, lot_no: str, wafer_no: str, *, provider: str) -> str:
     cur.execute("SELECT id FROM wafers WHERE lot_id = %s AND wafer_no = %s", (lot_id, wafer_no))
     row = cur.fetchone()
     if row:
@@ -278,9 +350,9 @@ def _get_or_create_wafer_id(cur: psycopg.Cursor, lot_id: str, lot_no: str, wafer
     cur.execute(
         """
         INSERT INTO wafers (id, lot_id, wafer_no, panel_no, status, created_at)
-        VALUES (%s, %s, %s, %s, %s, now())
+        VALUES (%s, %s, %s, %s, %s, %s)
         """,
-        (wafer_id, lot_id, wafer_no, panel_no, "in_progress"),
+        (wafer_id, lot_id, wafer_no, panel_no, "in_progress", datetime.now(timezone.utc)),
     )
     return wafer_id
 
@@ -315,11 +387,11 @@ def _parse_event(raw: dict) -> InspectionEvent:
     )
 
 
-def _insert_process_run(cur: psycopg.Cursor, ev: InspectionEvent) -> None:
-    tool_id = _get_or_create_tool_id(cur, ev.tool_code)
-    recipe_id = _get_or_create_recipe_id(cur)
-    lot_id = _get_or_create_lot_id(cur, ev.lot_no)
-    wafer_id = _get_or_create_wafer_id(cur, lot_id, ev.lot_no, ev.wafer_no)
+def _insert_process_run(cur, ev: InspectionEvent, *, provider: str) -> None:
+    tool_id = _get_or_create_tool_id(cur, ev.tool_code, provider=provider)
+    recipe_id = _get_or_create_recipe_id(cur, provider=provider)
+    lot_id = _get_or_create_lot_id(cur, ev.lot_no, provider=provider)
+    wafer_id = _get_or_create_wafer_id(cur, lot_id, ev.lot_no, ev.wafer_no, provider=provider)
 
     cur.execute(
         """
@@ -333,7 +405,7 @@ def _insert_process_run(cur: psycopg.Cursor, ev: InspectionEvent) -> None:
             %s, %s, %s, %s, %s,
             %s, %s,
             %s, %s, %s,
-            %s, now()
+            %s, %s
         )
         """,
         (
@@ -348,6 +420,7 @@ def _insert_process_run(cur: psycopg.Cursor, ev: InspectionEvent) -> None:
             ev.pressure,
             (ev.yield_rate / 100.0 if ev.yield_rate is not None and ev.yield_rate > 1 else ev.yield_rate),
             "pass",
+            datetime.now(timezone.utc),
         ),
     )
 
@@ -411,13 +484,17 @@ def writer_loop(stop: threading.Event) -> None:
     bootstrap = _env("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
     topic = _env("KAFKA_TOPIC_INSPECTION", "aoi.inspection.raw")
     group_id = _env("KAFKA_CONSUMER_GROUP", "aoiops-ingestion-writer")
-    db_conn = _normalize_conninfo(_env("DB_CONNECTION"))
+    provider = _db_provider()
+    raw_conn = _env("DB_CONNECTION")
+    db_conn = _normalize_conninfo(raw_conn)
+    mssql_conn = _parse_sqlserver_conn_str(raw_conn) if provider in ("sqlserver", "mssql") else None
 
     print(f"[ingestion:writer] bootstrap={bootstrap} topic={topic} group={group_id}")
 
     consumer: KafkaConsumer | None = None
     attempt = 0
     conn: psycopg.Connection | None = None
+    mssql: pytds.Connection | None = None
     inserted = 0
 
     while not stop.is_set():
@@ -425,27 +502,56 @@ def writer_loop(stop: threading.Event) -> None:
             if consumer is None:
                 consumer = _new_consumer(bootstrap=bootstrap, topic=topic, group_id=group_id)
                 attempt = 0
-            if conn is None or conn.closed:
-                # 為什麼要重連：DB container 重啟時，舊連線會變成 broken pipe
-                conn = psycopg.connect(db_conn)
+            if provider in ("sqlserver", "mssql"):
+                if mssql is None:
+                    # 為什麼要重連：DB container 重啟時，舊連線會中斷；pytds 也需要重新建立 connection
+                    assert mssql_conn is not None
+                    mssql = pytds.connect(
+                        mssql_conn.host,
+                        database=mssql_conn.database,
+                        user=mssql_conn.user,
+                        password=mssql_conn.password,
+                        port=mssql_conn.port,
+                        autocommit=False,
+                    )
+            else:
+                if conn is None or conn.closed:
+                    # 為什麼要重連：DB container 重啟時，舊連線會變成 broken pipe
+                    conn = psycopg.connect(db_conn)
 
             records = consumer.poll(timeout_ms=1000, max_records=50)
             if not records:
                 continue
 
             try:
-                with conn.cursor() as cur:
+                if provider in ("sqlserver", "mssql"):
+                    assert mssql is not None
+                    cur = mssql.cursor()
                     for _tp, msgs in records.items():
                         for m in msgs:
                             ev = _parse_event(m.value)
-                            _insert_process_run(cur, ev)
+                            _insert_process_run(cur, ev, provider=provider)
                             inserted += 1
-                conn.commit()
+                    mssql.commit()
+                else:
+                    assert conn is not None
+                    with conn.cursor() as cur:
+                        for _tp, msgs in records.items():
+                            for m in msgs:
+                                ev = _parse_event(m.value)
+                                _insert_process_run(cur, ev, provider=provider)
+                                inserted += 1
+                    conn.commit()
                 # 為什麼要打點：確認 consumer→DB writer 真的有落地（否則你只會看到資料一直是 1 筆）。
                 if inserted % 10 == 0:
                     print(f"[ingestion:writer] inserted={inserted}")
             except Exception as e:
-                conn.rollback()
+                if provider in ("sqlserver", "mssql"):
+                    if mssql is not None:
+                        mssql.rollback()
+                else:
+                    if conn is not None:
+                        conn.rollback()
                 print(f"[ingestion:writer] DB ERROR: {e}")
                 time.sleep(1.0)
         except (NoBrokersAvailable, KafkaTimeoutError) as e:
@@ -458,15 +564,23 @@ def writer_loop(stop: threading.Event) -> None:
             attempt += 1
             conn = None
             _sleep_with_backoff(attempt=attempt)
+        except pytds.OperationalError as e:
+            print(f"[ingestion:writer] DB not ready, retrying: {e}")
+            attempt += 1
+            mssql = None
+            _sleep_with_backoff(attempt=attempt)
         except Exception as e:
             print(f"[ingestion:writer] ERROR: {e}")
             attempt += 1
             consumer = None
             conn = None
+            mssql = None
             _sleep_with_backoff(attempt=attempt)
 
     if conn is not None and not conn.closed:
         conn.close()
+    if mssql is not None:
+        mssql.close()
 
 
 def main() -> None:
