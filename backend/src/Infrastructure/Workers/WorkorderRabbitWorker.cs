@@ -71,6 +71,28 @@ public sealed class WorkorderRabbitWorker : IRabbitMessageHandler
             lotId = lot?.Id;
         }
 
+        // 為什麼順手解 panel / tool id：
+        // - workorder 列表頁要顯示 panel_no / tool_code / station_code / operator，
+        //   讓 FK 與冗餘字串都填齊，前端就能直接 select 顯示。
+        Guid? panelId = null;
+        var panelNo = evt.PanelNo;
+        if (string.IsNullOrEmpty(panelNo) && !string.IsNullOrEmpty(evt.LotNo) && evt.WaferNo.HasValue)
+        {
+            panelNo = $"{evt.LotNo}-{evt.WaferNo.Value}";
+        }
+        if (!string.IsNullOrEmpty(panelNo))
+        {
+            var panel = await _db.Panels.FirstOrDefaultAsync(p => p.PanelNo == panelNo, cancellationToken);
+            panelId = panel?.Id;
+        }
+
+        Guid? toolId = null;
+        if (!string.IsNullOrEmpty(evt.ToolCode))
+        {
+            var tool = await _db.Tools.FirstOrDefaultAsync(t => t.ToolCode == evt.ToolCode, cancellationToken);
+            toolId = tool?.Id;
+        }
+
         // 為什麼這樣產 workorder_no：
         // - 對應 Python db-sink 既有規則：WO-yyyymmddhhmmss-{8字 random}；
         //   讓兩邊產出可讀識別碼一致，運維 / 比對 log 時不會混淆。
@@ -82,10 +104,24 @@ public sealed class WorkorderRabbitWorker : IRabbitMessageHandler
             _ => "P3",
         };
 
+        // 為什麼把全套關聯欄位都寫進去：
+        // - 工單列表 API 不再需要 LEFT JOIN；
+        // - 即使原始母表被歸檔，工單仍保留當時快照供稽核。
         var wo = new Workorder
         {
             Id = Guid.NewGuid(),
             LotId = lotId,
+            PanelId = panelId,
+            ToolId = toolId,
+            LotNo = evt.LotNo,
+            PanelNo = panelNo,
+            ToolCode = evt.ToolCode,
+            LineCode = evt.LineCode,
+            StationCode = evt.StationCode,
+            OperatorCode = evt.OperatorCode,
+            OperatorName = evt.OperatorName,
+            Severity = evt.Severity,
+            DefectCode = evt.DefectCode,
             WorkorderNo = $"WO-{DateTime.UtcNow:yyyyMMddHHmmss}-{Guid.NewGuid().ToString()[..8]}",
             Priority = priority,
             Status = "open",
@@ -105,31 +141,47 @@ public sealed class WorkorderRabbitWorker : IRabbitMessageHandler
             priority = wo.Priority,
             status = wo.Status,
             createdAt = wo.CreatedAt,
-            lotNo = evt.LotNo,
-            severity = evt.Severity,
+            lotNo = wo.LotNo,
+            panelNo = wo.PanelNo,
+            toolCode = wo.ToolCode,
+            lineCode = wo.LineCode,
+            stationCode = wo.StationCode,
+            operatorCode = wo.OperatorCode,
+            operatorName = wo.OperatorName,
+            severity = wo.Severity,
+            defectCode = wo.DefectCode,
         }, cancellationToken);
         sw.Stop();
         _metrics.RecordWorkorder(sw.Elapsed.TotalMilliseconds);
 
         _logger.LogInformation(
-            "Workorder 已建立並推送：no={No} priority={Priority} lot={Lot} pushMs={PushMs}",
-            wo.WorkorderNo, wo.Priority, evt.LotNo, sw.Elapsed.TotalMilliseconds);
+            "Workorder 已建立並推送：no={No} priority={Priority} lot={Lot} panel={Panel} tool={Tool} op={Op} pushMs={PushMs}",
+            wo.WorkorderNo, wo.Priority, wo.LotNo, wo.PanelNo, wo.ToolCode, wo.OperatorCode, sw.Elapsed.TotalMilliseconds);
         return true;
     }
 
     private static string Truncate(string s) => s.Length <= 200 ? s : s[..200] + "…";
 
+    // 為什麼設 SnakeCaseLower：理由同 AlarmRabbitWorker，與 Python publisher 的 snake_case payload 對齊。
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNameCaseInsensitive = true,
+        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower,
     };
 
     private sealed class DefectEventPayload
     {
         public string? EventId { get; set; }
         public string? ToolCode { get; set; }
+        public string? LineCode { get; set; }
+        public string? StationCode { get; set; }
         public string? LotNo { get; set; }
+        public int? WaferNo { get; set; }
+        public string? PanelNo { get; set; }
+        public string? OperatorCode { get; set; }
+        public string? OperatorName { get; set; }
         public string? DefectCode { get; set; }
+        public string? DefectType { get; set; }
         public string? Severity { get; set; }
         public DateTimeOffset? Timestamp { get; set; }
     }

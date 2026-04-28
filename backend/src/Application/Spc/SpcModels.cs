@@ -27,7 +27,19 @@ public sealed record SpcInspectionEvent(
     DateTimeOffset Timestamp,
     double? Temperature,
     double? Pressure,
-    double? YieldRate);
+    double? YieldRate,
+    /// <summary>本則檢驗事件代表的件數／批量（預設 1）。供前端累積產出與速率與觀測點數對帳。</summary>
+    int InspectedQty = 1,
+    /// <summary>產線代碼（ingestion 端從機台對照表帶入），可避免 Worker 再去推測。</summary>
+    string? LineCode = null,
+    /// <summary>站別代碼（ingestion 端從機台對照表帶入）。</summary>
+    string? StationCode = null,
+    /// <summary>板號（ingestion 端組好），SPC 落地與前端追溯都會用。</summary>
+    string? PanelNo = null,
+    /// <summary>當下作業員代碼。</summary>
+    string? OperatorCode = null,
+    /// <summary>當下作業員顯示名稱。</summary>
+    string? OperatorName = null);
 
 /// <summary>
 /// 經過規則引擎處理後，要透過 SignalR 推給前端的單點。
@@ -49,7 +61,21 @@ public sealed record SpcPointPayload(
     double Cl,
     double Lcl,
     double? Cpk,
-    IReadOnlyList<SpcRuleViolation> Violations);
+    IReadOnlyList<SpcRuleViolation> Violations,
+    /// <summary>與來源事件相同；累積產出 = 視窗內各點 InspectedQty 之和。</summary>
+    int InspectedQty = 1,
+    /// <summary>工單／批次號（Kafka lot_no），供前端與產線、機台並列追溯。</summary>
+    string? LotNo = null,
+    /// <summary>板／晶圓序號（Kafka wafer_no），與批次關聯。</summary>
+    int? WaferNo = null,
+    /// <summary>站別代碼（SPI/SMT/REFLOW/AOI/ICT/FQC），讓 SPC 圖也能標出當下站別。</summary>
+    string? StationCode = null,
+    /// <summary>板號字串，與 ingestion 寫 panels 對齊（lot_no-wafer_no）。</summary>
+    string? PanelNo = null,
+    /// <summary>當下作業員代碼。</summary>
+    string? OperatorCode = null,
+    /// <summary>當下作業員顯示名稱。</summary>
+    string? OperatorName = null);
 
 /// <summary>
 /// 八大規則違規結果。

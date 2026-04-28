@@ -5,11 +5,12 @@ namespace AOIOpsPlatform.Domain.Entities;
 /// </summary>
 /// <remarks>
 /// 為什麼用「物料批號」而不是「物料品項」：
-/// - PCB / 半導體真實追溯時，懷疑同一批物料造成不良；
+/// - PCB 真實追溯時，懷疑同一批物料造成不良；
 ///   所以需要儲存「整批的識別碼」與「來源廠商 / 收貨日」，
 ///   發生問題能一鍵 query 同批物料用在哪些板上。
-/// - 物料品項的 master data（型號 / 規格）後續可再拉一張 material_master 表，
-///   現階段先把追溯路徑打通最重要。
+///
+/// 為什麼新增 navigation：
+/// - 與 PanelMaterialUsage 形成正反兩向 navigation，方便 EF 查詢與 Cascade 設定。
 /// </remarks>
 public sealed class MaterialLot
 {
@@ -31,4 +32,6 @@ public sealed class MaterialLot
     public DateTimeOffset? ReceivedAt { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; }
+
+    public ICollection<PanelMaterialUsage> Usages { get; set; } = new List<PanelMaterialUsage>();
 }

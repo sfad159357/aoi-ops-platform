@@ -191,6 +191,107 @@ def _sql_now(provider: str) -> str:
     return "SYSUTCDATETIME()" if provider in ("sqlserver", "mssql") else "now()"
 
 
+# ─── tool / station / line / operator mapping ───────────────────────────
+#
+# 為什麼把這幾組 mapping 寫死在 ingestion：
+# - 真實 MES 來源端就是設備站台，會在「機台 → 站別 → 產線」這個路徑上做硬綁定（一台 SPI 不會跑 AOI 程式）。
+# - Kafka payload 在「源頭」就要把 line_code / station_code / operator 填齊，
+#   下游 SignalR 推給前端，alarms/workorders/defects/spc_measurements 才能直接渲染欄位、不再回頭推測。
+# - 這是 demo / 面試示範取向，未來可換成 master config 載入；目前保留可讀字典最直觀。
+TOOL_TO_LINE: dict[str, str] = {
+    # SMT-A 線（完整 6 站）
+    "SPI-A01": "SMT-A",
+    "SMT-A01": "SMT-A",
+    "REFLOW-A01": "SMT-A",
+    "AOI-A01": "SMT-A",
+    "ICT-A01": "SMT-A",
+    "FQC-A01": "SMT-A",
+    # SMT-B 線（部份站）
+    "SMT-B01": "SMT-B",
+    "AOI-B01": "SMT-B",
+    # 沿用舊 demo 名稱，避免歷史 Kafka 訊息找不到 mapping
+    "AOI-A": "SMT-A",
+    "AOI-B": "SMT-B",
+}
+
+TOOL_TO_STATION: dict[str, str] = {
+    "SPI-A01": "SPI",
+    "SMT-A01": "SMT",
+    "REFLOW-A01": "REFLOW",
+    "AOI-A01": "AOI",
+    "ICT-A01": "ICT",
+    "FQC-A01": "FQC",
+    "SMT-B01": "SMT",
+    "AOI-B01": "AOI",
+    "AOI-A": "AOI",
+    "AOI-B": "AOI",
+}
+
+# 員工池：(operator_code, operator_name, role, shift)
+# 為什麼保留 shift 欄位：
+# - 真實工廠值班是「3 班 8 小時」，SPC/異常記錄要能依班別歸責；
+#   這裡用簡化的「依小時切 3 班」決定可選名單。
+OPERATORS: list[tuple[str, str, str, str]] = [
+    ("OP-001", "王小明", "operator", "A"),
+    ("OP-002", "李大華", "operator", "A"),
+    ("OP-003", "張美玲", "operator", "B"),
+    ("OP-004", "林志偉", "operator", "B"),
+    ("OP-005", "陳怡君", "operator", "C"),
+    ("OP-006", "黃文豪", "operator", "C"),
+    ("LEADER-A", "周建華", "leader", "A"),
+    ("LEADER-B", "吳秀英", "leader", "B"),
+    ("LEADER-C", "韓立群", "leader", "C"),
+    ("ENG-001", "趙俊傑", "engineer", "A"),
+    ("QC-001", "蔡佳玲", "qc", "A"),
+]
+
+DEFECT_TYPES: list[str] = [
+    "短路",
+    "斷路",
+    "錫橋",
+    "空焊",
+    "偏移",
+    "缺件",
+    "異物",
+    "極性反向",
+]
+
+
+def _current_shift() -> str:
+    """根據 UTC+8 小時切 3 班（A:08-16 / B:16-24 / C:00-08）。"""
+    h = (datetime.now(timezone.utc).hour + 8) % 24
+    if 8 <= h < 16:
+        return "A"
+    if 16 <= h < 24:
+        return "B"
+    return "C"
+
+
+def _pick_operator(*, station_code: str | None) -> tuple[str, str]:
+    """
+    依當下班別 + 站別挑一個 operator，回傳 (operator_code, operator_name)。
+
+    為什麼這樣設計：
+    - 同班內的人會分配到不同站；不需要嚴格站對人，只要能在 demo 看出「同班別會輪不同站」即可。
+    - 若沒對到 shift，退回 OP-001（避免 random.choice 拋例外讓整個 producer 崩）。
+    """
+    shift = _current_shift()
+    pool = [op for op in OPERATORS if op[3] == shift] or OPERATORS
+    # 站別 hash 偏一個 operator，讓同站趨向同人，但同班可變化
+    if station_code:
+        idx = (sum(ord(c) for c in station_code) + len(pool)) % len(pool)
+        # 90% 機率走偏好人選，10% 隨機，避免每次都同一個顯示太假
+        if random.random() < 0.9:
+            return pool[idx][0], pool[idx][1]
+    pick = random.choice(pool)
+    return pick[0], pick[1]
+
+
+def _resolve_panel_no(*, lot_no: str, wafer_no: int | str) -> str:
+    """產生 panel_no（外部端 / Worker 端統一用同一個 format）。"""
+    return f"{lot_no}-{wafer_no}"
+
+
 def build_inspection_event(*, tool_code: str, lot_no: str, wafer_no: int) -> dict:
     """
     建立 inspection 事件（aoi.inspection.raw）。
@@ -238,33 +339,67 @@ def build_inspection_event(*, tool_code: str, lot_no: str, wafer_no: int) -> dic
         yield_rate += random.gauss(0, 2.0)
 
     yield_rate = max(0.0, min(100.0, yield_rate))
+
+    # 為什麼源頭就帶齊 line/station/operator/panel：
+    # - 下游 SpcRealtimeWorker / RabbitMQ Worker 不需要再「猜」這些欄位；
+    # - 前端 4 大頁面（SPC/異常/工單/物料追溯）所有需要的關聯欄位都從同一份 Kafka payload 出發，最不容易對不上。
+    line_code = TOOL_TO_LINE.get(tool_code)
+    station_code = TOOL_TO_STATION.get(tool_code)
+    operator_code, operator_name = _pick_operator(station_code=station_code)
+    panel_no = _resolve_panel_no(lot_no=lot_no, wafer_no=wafer_no)
     return {
         "event_id": str(uuid.uuid4()),
         "tool_code": tool_code,
+        "line_code": line_code,
+        "station_code": station_code,
         "lot_no": lot_no,
         "wafer_no": wafer_no,
+        "panel_no": panel_no,
+        "operator_code": operator_code,
+        "operator_name": operator_name,
         "timestamp": _now_iso(),
         "temperature": round(temperature, 3),
         "pressure": round(pressure, 3),
         "yield_rate": round(yield_rate, 3),
+        # 與後端 SpcInspectionEvent.InspectedQty 對齊：一則事件對應的檢驗件數（與 KPI 累積/速率對帳）。
+        # 預設 1；真機可改為 AOI 一次掃到的板數等。
+        "inspected_qty": 1,
         "defects": [],
     }
 
 
-def build_defect_event(*, tool_code: str, lot_no: str, severity: str) -> dict:
+def build_defect_event(*, tool_code: str, lot_no: str, wafer_no: int, severity: str) -> dict:
     """
     建立 defect 事件（aoi.defect.event）。
 
     為什麼要有 defect event：
     - W03 需要示範 Kafka→RabbitMQ 的業務路由（alert/workorder）。
     - 我們用 severity 來模擬「告警」與「開工單」的優先級。
+
+    為什麼 payload 加 panel_no / station_code / operator / x_coord / y_coord：
+    - alarms 與 defects 表現在都需要冗餘 panel_no / station_code / operator；
+      讓 Worker 端寫 DB 時免再 JOIN，也讓前端列表能直接顯示。
+    - 缺陷座標（x/y）是 PCB AOI 的標準欄位，雖然 alarm 列表不會渲染，但 defects 表的追溯查詢會用到。
     """
 
+    line_code = TOOL_TO_LINE.get(tool_code)
+    station_code = TOOL_TO_STATION.get(tool_code)
+    operator_code, operator_name = _pick_operator(station_code=station_code)
+    panel_no = _resolve_panel_no(lot_no=lot_no, wafer_no=wafer_no)
     return {
         "event_id": str(uuid.uuid4()),
         "tool_code": tool_code,
+        "line_code": line_code,
+        "station_code": station_code,
         "lot_no": lot_no,
+        "wafer_no": wafer_no,
+        "panel_no": panel_no,
+        "operator_code": operator_code,
+        "operator_name": operator_name,
         "defect_code": f"DEF-{random.randint(1, 9999):04d}",
+        "defect_type": random.choice(DEFECT_TYPES),
+        "x_coord": round(random.uniform(0.0, 250.0), 2),
+        "y_coord": round(random.uniform(0.0, 200.0), 2),
         "severity": severity,
         "timestamp": _now_iso(),
     }
@@ -322,39 +457,35 @@ def _get_or_create_lot_id(cur, lot_no: str, *, provider: str) -> str:
     return lot_id
 
 
-def _get_or_create_wafer_id(cur, lot_id: str, lot_no: str, wafer_no: str, *, provider: str) -> str:
-    cur.execute("SELECT id FROM wafers WHERE lot_id = %s AND wafer_no = %s", (lot_id, wafer_no))
+def _get_or_create_panel_id(cur, lot_id: str, lot_no: str, wafer_no: str, *, provider: str) -> tuple[str, str]:
+    """
+    依 (lot_id, panel_no) 查 panels；找不到就建立一筆。
+
+    為什麼要把 wafer_id 改名 panel_id：
+    - 系統聚焦 PCB 高階製程後，DB 已將 wafers 表改名 panels；
+      這裡同步換掉，避免 INSERT 失敗或寫到不存在的表。
+
+    為什麼回傳 (panel_id, panel_no)：
+    - 後續 INSERT process_runs 時要冗餘 panel_no，避免 query 還要 JOIN 回 panels。
+    """
+    panel_no = f"{lot_no}-{wafer_no}"
+    cur.execute("SELECT id FROM panels WHERE lot_id = %s AND panel_no = %s", (lot_id, panel_no))
     row = cur.fetchone()
     if row:
-        wafer_id = str(row[0])
-        # 為什麼在「已存在」時也補 panel_no：
-        # - 實務上 lot/wafer 可能先被寫入（早期版本沒有 panel_no），
-        #   之後才升級 schema / 程式；
-        # - 若只在 INSERT 時寫 panel_no，舊資料會永遠是 NULL，追溯頁的 recent list 仍會是空的。
-        panel_no = f"{lot_no}-{wafer_no}"
-        cur.execute(
-            """
-            UPDATE wafers
-            SET panel_no = %s
-            WHERE id = %s AND panel_no IS NULL
-            """,
-            (panel_no, wafer_id),
-        )
-        return wafer_id
-    wafer_id = str(uuid.uuid4())
-    # 為什麼要補 panel_no：
-    # - Traceability 的 RecentPanels endpoint 會用 `WHERE panel_no IS NOT NULL` 當作「可追溯的板」條件；
-    # - 先前 ingestion 只寫 wafer_no，沒有寫 panel_no，導致追溯頁「最近板」永遠是空的，看起來像沒預設資料。
-    # - 這裡用 lot_no + wafer_no 組一個可讀的板號，兼顧 demo 與真實情境（板號通常可由批次+序號推得）。
-    panel_no = f"{lot_no}-{wafer_no}"
+        return str(row[0]), panel_no
+
+    panel_id = str(uuid.uuid4())
+    # 為什麼這裡同時寫入 lot_no 冗餘：
+    # - panels 表已新增 lot_no 必填欄位，作為 controllers/前端的可讀字串；
+    #   建立板號時就帶入 lot_no，未來查詢免 JOIN lots。
     cur.execute(
         """
-        INSERT INTO wafers (id, lot_id, wafer_no, panel_no, status, created_at)
+        INSERT INTO panels (id, lot_id, lot_no, panel_no, status, created_at)
         VALUES (%s, %s, %s, %s, %s, %s)
         """,
-        (wafer_id, lot_id, wafer_no, panel_no, "in_progress", datetime.now(timezone.utc)),
+        (panel_id, lot_id, lot_no, panel_no, "in_progress", datetime.now(timezone.utc)),
     )
-    return wafer_id
+    return panel_id, panel_no
 
 
 @dataclass(frozen=True)
@@ -363,6 +494,11 @@ class InspectionEvent:
     tool_code: str
     lot_no: str
     wafer_no: str
+    panel_no: str | None
+    line_code: str | None
+    station_code: str | None
+    operator_code: str | None
+    operator_name: str | None
     timestamp: datetime
     temperature: float | None
     pressure: float | None
@@ -370,16 +506,31 @@ class InspectionEvent:
 
 
 def _parse_event(raw: dict) -> InspectionEvent:
+    """
+    解析 Kafka inspection raw 事件。
+
+    為什麼要把 line/station/operator/panel_no 也吃進來：
+    - 源頭 producer 已經把這些欄位寫齊，下游 writer 接著要把它們落到 process_runs / panel_station_log；
+    - 這個 dataclass 是 producer 與 writer 的「跨 thread contract」，任何新欄位先在這裡集中。
+    """
     ts = raw.get("timestamp")
     if isinstance(ts, str):
         timestamp = datetime.fromisoformat(ts.replace("Z", "+00:00"))
     else:
         timestamp = datetime.now(timezone.utc)
+    tool_code = str(raw.get("tool_code") or "AOI-A")
+    lot_no = str(raw.get("lot_no") or "LOT-001")
+    wafer_no = str(raw.get("wafer_no") or "1")
     return InspectionEvent(
         event_id=str(raw.get("event_id") or uuid.uuid4()),
-        tool_code=str(raw.get("tool_code") or "AOI-A"),
-        lot_no=str(raw.get("lot_no") or "LOT-001"),
-        wafer_no=str(raw.get("wafer_no") or "1"),
+        tool_code=tool_code,
+        lot_no=lot_no,
+        wafer_no=wafer_no,
+        panel_no=(str(raw["panel_no"]) if raw.get("panel_no") else _resolve_panel_no(lot_no=lot_no, wafer_no=wafer_no)),
+        line_code=(str(raw["line_code"]) if raw.get("line_code") else TOOL_TO_LINE.get(tool_code)),
+        station_code=(str(raw["station_code"]) if raw.get("station_code") else TOOL_TO_STATION.get(tool_code)),
+        operator_code=(str(raw["operator_code"]) if raw.get("operator_code") else None),
+        operator_name=(str(raw["operator_name"]) if raw.get("operator_name") else None),
         timestamp=timestamp,
         temperature=(float(raw["temperature"]) if raw.get("temperature") is not None else None),
         pressure=(float(raw["pressure"]) if raw.get("pressure") is not None else None),
@@ -387,22 +538,116 @@ def _parse_event(raw: dict) -> InspectionEvent:
     )
 
 
+def _upsert_panel_station_log(cur, ev: InspectionEvent, panel_id: str, *, provider: str) -> None:
+    """
+    將「板過站事件」寫入 panel_station_log。
+
+    為什麼要做：
+    - 物料追溯 / 板級時間軸頁面需要「這張板經過哪些站」；
+    - 站別歷程不該交給人手動 seed，而要從 ingestion 即時長出來，與 Kafka 同步。
+
+    為什麼用 (panel_id, station_code) 唯一性 + ExitedAt update 模式：
+    - 同一張板可能在同站多次量測（複測），但站別歷程通常只記錄「進站時間 + 結果 + 出站時間」；
+    - 若已存在同站紀錄則 update exited_at / result，這樣才不會重覆塞 log。
+    """
+    if not ev.station_code:
+        return
+
+    cur.execute(
+        """
+        SELECT TOP 1 id FROM panel_station_log
+        WHERE panel_id = %s AND station_code = %s
+        ORDER BY entered_at DESC
+        """ if provider in ("sqlserver", "mssql") else
+        """
+        SELECT id FROM panel_station_log
+        WHERE panel_id = %s AND station_code = %s
+        ORDER BY entered_at DESC
+        LIMIT 1
+        """,
+        (panel_id, ev.station_code),
+    )
+    row = cur.fetchone()
+    if row:
+        cur.execute(
+            """
+            UPDATE panel_station_log
+            SET exited_at = %s,
+                result = %s,
+                operator = %s,
+                operator_name = %s,
+                tool_code = %s
+            WHERE id = %s
+            """,
+            (
+                ev.timestamp,
+                "pass",
+                ev.operator_code,
+                ev.operator_name,
+                ev.tool_code,
+                str(row[0]),
+            ),
+        )
+        return
+
+    cur.execute(
+        """
+        INSERT INTO panel_station_log (
+            id, panel_id, panel_no, station_code,
+            entered_at, exited_at, result,
+            operator, operator_name, tool_code, note
+        )
+        VALUES (
+            %s, %s, %s, %s,
+            %s, %s, %s,
+            %s, %s, %s, %s
+        )
+        """,
+        (
+            str(uuid.uuid4()),
+            panel_id,
+            ev.panel_no or _resolve_panel_no(lot_no=ev.lot_no, wafer_no=ev.wafer_no),
+            ev.station_code,
+            ev.timestamp,
+            ev.timestamp,
+            "pass",
+            ev.operator_code,
+            ev.operator_name,
+            ev.tool_code,
+            None,
+        ),
+    )
+
+
 def _insert_process_run(cur, ev: InspectionEvent, *, provider: str) -> None:
+    """
+    把一筆 inspection 事件寫入 process_runs，並同步更新 panel_station_log。
+
+    為什麼此處同步寫冗餘欄位（tool_code/lot_no/panel_no）：
+    - process_runs 表已新增這三個必填字串欄位，DTO 投影直接吃 entity 屬性即可；
+    - 寫入時複製一次，後續查詢免 JOIN tools/lots/panels。
+
+    為什麼這裡順手寫 panel_station_log：
+    - 板過站是 inspection 的「副作用」事件；放同一個 transaction 內，
+      可以保證「process_run 有值 → 站別歷程也一定有對應 row」。
+    """
     tool_id = _get_or_create_tool_id(cur, ev.tool_code, provider=provider)
     recipe_id = _get_or_create_recipe_id(cur, provider=provider)
     lot_id = _get_or_create_lot_id(cur, ev.lot_no, provider=provider)
-    wafer_id = _get_or_create_wafer_id(cur, lot_id, ev.lot_no, ev.wafer_no, provider=provider)
+    panel_id, panel_no = _get_or_create_panel_id(cur, lot_id, ev.lot_no, ev.wafer_no, provider=provider)
 
     cur.execute(
         """
         INSERT INTO process_runs (
-            id, tool_id, recipe_id, lot_id, wafer_id,
+            id, tool_id, recipe_id, lot_id, panel_id,
+            tool_code, lot_no, panel_no,
             run_start_at, run_end_at,
             temperature, pressure, yield_rate,
             result_status, created_at
         )
         VALUES (
             %s, %s, %s, %s, %s,
+            %s, %s, %s,
             %s, %s,
             %s, %s, %s,
             %s, %s
@@ -413,7 +658,10 @@ def _insert_process_run(cur, ev: InspectionEvent, *, provider: str) -> None:
             tool_id,
             recipe_id,
             lot_id,
-            wafer_id,
+            panel_id,
+            ev.tool_code,
+            ev.lot_no,
+            panel_no,
             ev.timestamp,
             ev.timestamp,
             ev.temperature,
@@ -424,14 +672,21 @@ def _insert_process_run(cur, ev: InspectionEvent, *, provider: str) -> None:
         ),
     )
 
+    _upsert_panel_station_log(cur, ev, panel_id, provider=provider)
+
 
 def producer_loop(stop: threading.Event) -> None:
     bootstrap = _env("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
     topic_inspection = _env("KAFKA_TOPIC_INSPECTION", "aoi.inspection.raw")
     topic_defect = _env("KAFKA_TOPIC_DEFECT", "aoi.defect.event")
 
-    tool_codes = ["AOI-A", "AOI-B"]
-    lot_nos = ["LOT-001", "LOT-002", "LOT-003"]
+    # 為什麼 tool / lot 池擴大：
+    # - 4 大頁面要展示「機台、產線、站別、批次、板號、人員」全欄位渲染；
+    #   只有 2 機台 3 lots 會讓 demo 看起來像玩具，列表內容也單調。
+    # - 工單號（lot_no）採 WO-yyyymmdd-NNN 格式比較貼近真實 MES 慣例。
+    tool_codes = list(TOOL_TO_STATION.keys())
+    today = datetime.now(timezone.utc).strftime("%Y%m%d")
+    lot_nos = [f"WO-{today}-{i:03d}" for i in range(1, 9)]
 
     print(f"[ingestion:producer] bootstrap={bootstrap} topic={topic_inspection} defect_topic={topic_defect}")
 
@@ -453,10 +708,11 @@ def producer_loop(stop: threading.Event) -> None:
             evt = build_inspection_event(tool_code=tool, lot_no=lot, wafer_no=wafer)
             producer.send(topic_inspection, key=tool, value=evt)
 
-            # 每 20 筆注入一次 defect event（用來 demo Kafka→RabbitMQ 的 alert/workorder 路由）
-            if step % 20 == 0 and step > 0:
-                sev = random.choices(["low", "medium", "high"], weights=[0.6, 0.3, 0.1], k=1)[0]
-                defect = build_defect_event(tool_code=tool, lot_no=lot, severity=sev)
+            # 每 12 筆注入一次 defect event（用來 demo Kafka→RabbitMQ 的 alert/workorder 路由）
+            # 為什麼把頻率從 20→12：4 頁面 demo 時 alarms / workorders 列表能比較快累積，主管看得到變化。
+            if step % 12 == 0 and step > 0:
+                sev = random.choices(["low", "medium", "high"], weights=[0.5, 0.35, 0.15], k=1)[0]
+                defect = build_defect_event(tool_code=tool, lot_no=lot, wafer_no=wafer, severity=sev)
                 producer.send(topic_defect, key=tool, value=defect)
 
             producer.flush(timeout=2)

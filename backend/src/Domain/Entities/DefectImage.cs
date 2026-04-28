@@ -5,6 +5,9 @@ namespace AOIOpsPlatform.Domain.Entities;
 /// 目的：把影像檔路徑與解析度等資訊正規化到獨立表，
 /// 讓同一個 defect 可掛多張圖片（例如原圖、裁切、縮圖）。
 /// </summary>
+/// <remarks>
+/// 為什麼加 navigation：方便 EF Cascade Delete，刪除 defect 時自動清除相片紀錄。
+/// </remarks>
 public sealed class DefectImage
 {
     public Guid Id { get; set; }
@@ -20,5 +23,6 @@ public sealed class DefectImage
     public int? Height { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; }
-}
 
+    public Defect? Defect { get; set; }
+}

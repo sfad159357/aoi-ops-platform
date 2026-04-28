@@ -24,6 +24,9 @@ public sealed class SpcWindowState
     private readonly object _lock = new();
     private readonly Queue<double> _values;
     private readonly int _capacity;
+    private bool _hasBaseline;
+    private double _baselineCl;
+    private double _baselineSigma;
 
     public SpcWindowState(int capacity = 25)
     {
@@ -42,13 +45,60 @@ public sealed class SpcWindowState
     /// - 規則引擎接 array 計算時希望快照不變；
     ///   給內部 queue reference 會被下個 append 改掉，造成計算結果不穩。
     /// </remarks>
-    public IReadOnlyList<double> Add(double value)
+    public SpcWindowSnapshot Add(double value)
     {
         lock (_lock)
         {
             _values.Enqueue(value);
             while (_values.Count > _capacity) _values.Dequeue();
-            return _values.ToArray();
+
+            // Baseline（固定管制線）策略：
+            // - 先收滿 capacity（預設 25）個點，視為「穩定期」；
+            // - 只在第一次收滿時算一次 CL/σ，之後固定水平管制線（教科書 SPC 標準做法）。
+            //
+            // 為什麼不每點重算：
+            // - 滑動視窗每點重算會讓 UCL/LCL 變成曲線，偏向監控儀表板而非傳統管制圖；
+            // - 使用者要求參照「先收 20~25 點再固定」的流程，因此這裡把 baseline 鎖定起來。
+            if (!_hasBaseline && _values.Count == _capacity)
+            {
+                var arr = _values.ToArray();
+                _baselineCl = Mean(arr);
+                _baselineSigma = SampleStdDev(arr, _baselineCl);
+                _hasBaseline = true;
+            }
+
+            var window = _values.ToArray();
+            return new SpcWindowSnapshot(
+                Window: window,
+                Baseline: _hasBaseline ? new SpcBaseline(_baselineCl, _baselineSigma, _capacity) : null);
         }
     }
+
+    private static double Mean(IReadOnlyList<double> values)
+    {
+        double s = 0;
+        for (var i = 0; i < values.Count; i++) s += values[i];
+        return s / Math.Max(1, values.Count);
+    }
+
+    private static double SampleStdDev(IReadOnlyList<double> values, double mean)
+    {
+        // 為什麼用樣本標準差（n-1）：
+        // - SPC 常用樣本估計 σ；若 n 太小或全同值，σ 會趨近 0，需要下游做保守處理。
+        var n = values.Count;
+        if (n < 2) return 0;
+        double ss = 0;
+        for (var i = 0; i < n; i++)
+        {
+            var d = values[i] - mean;
+            ss += d * d;
+        }
+        return Math.Sqrt(ss / (n - 1));
+    }
 }
+
+/// <summary>視窗快照（含 baseline 固定管制線資訊）。</summary>
+public sealed record SpcWindowSnapshot(IReadOnlyList<double> Window, SpcBaseline? Baseline);
+
+/// <summary>Baseline：固定水平管制線用的 CL/σ。</summary>
+public sealed record SpcBaseline(double Cl, double Sigma, int N);

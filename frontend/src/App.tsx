@@ -338,133 +338,167 @@ function App() {
 
       {/* 原有系統狀態 / API 驗收頁（只在選到 health 時顯示） */}
       {page === 'health' && (
-      <section id="center">
-        <div>
-          <h1>AOI Ops Platform — 前端最小驗收</h1>
-          <p>
-            這頁只做一件事：打後端 <code>/api/health/db</code>，確認後端與 DB 真的有通。
-          </p>
-          <p>
-            API Base URL（可用 <code>VITE_API_BASE_URL</code> 調整）：<code>{apiBaseUrl}</code>
-          </p>
-
-          {loading && <p>載入中…</p>}
-          {!loading && error && (
-            <div style={{ textAlign: 'left', maxWidth: 720, margin: '0 auto' }}>
-              <h2 style={{ marginBottom: 8 }}>連線失敗</h2>
-              <pre style={{ whiteSpace: 'pre-wrap' }}>{error}</pre>
-              <p style={{ marginTop: 12 }}>
-                新手排查順序建議：先確認 backend 是否在 <code>http://localhost:8080</code>，
-                再確認 docker compose 的服務是否都起來。
+        <section id="center">
+          <div style={{ width: '100%', maxWidth: 960, margin: '0 auto', padding: '28px 16px 40px' }}>
+            {/* 為什麼把 health 做成 landing：
+                - 面試 demo 時需要「一眼看到是 MES + 串流 + 可驗收」，而不是工程用的雜訊頁。
+                - 但仍保留既有驗收區塊，確保資料真的來自後端/DB 而非 mock。 */}
+            <div
+              style={{
+                background: 'linear-gradient(135deg, rgba(59,130,246,0.18), rgba(16,185,129,0.10))',
+                border: '1px solid rgba(148,163,184,0.25)',
+                borderRadius: 16,
+                padding: '18px 18px 16px',
+                marginBottom: 18,
+                boxShadow: '0 10px 30px rgba(0,0,0,0.18)',
+              }}
+            >
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
+                <h1 style={{ margin: 0, fontSize: 28, letterSpacing: 0.2 }}>
+                  MES模擬PCB生產線 <span style={{ opacity: 0.9 }}>DEMO</span>
+                </h1>
+                <span
+                  style={{
+                    fontSize: 12,
+                    padding: '4px 10px',
+                    borderRadius: 999,
+                    border: '1px solid rgba(59,130,246,0.55)',
+                    background: 'rgba(59,130,246,0.12)',
+                    color: '#93c5fd',
+                  }}
+                >
+                  Kafka/RabbitMQ → MSSQL/InfluxDB → SignalR → Web
+                </span>
+              </div>
+              <p style={{ margin: '10px 0 0', color: '#cbd5e1', lineHeight: 1.6 }}>
+                這個首頁用來做<strong>真實落地驗收</strong>：直接打後端 <code>/api/health/db</code> 與各 API，確保資料流暢、欄位關聯完整（非 mock）。
+              </p>
+              <p style={{ margin: '8px 0 0', color: '#94a3b8', lineHeight: 1.6 }}>
+                API Base URL（可用 <code>VITE_API_BASE_URL</code> 調整）：<code>{apiBaseUrl}</code>
               </p>
             </div>
-          )}
 
-          {!loading && !error && data && (
-            <div style={{ textAlign: 'left', maxWidth: 720, margin: '0 auto' }}>
-              <h2 style={{ marginBottom: 8 }}>連線成功</h2>
-              <ul>
-                <li>
-                  後端是否能連 DB：<strong>{String(data.canConnect)}</strong>
-                </li>
-                <li>
-                  <code>tools</code> 資料表是否存在（用來判斷 schema 是否已建立）：
-                  <strong> {String(data.toolsTableExists)}</strong>
-                </li>
-              </ul>
-              <p style={{ marginTop: 12 }}>
-                下一步（W02）：你應該也能打得通 <code>/api/lots</code>，並在下方看到 lot 清單。
-              </p>
-            </div>
-          )}
+            {loading && <p>載入中…</p>}
+            {!loading && error && (
+              <div style={{ textAlign: 'left', maxWidth: 720, margin: '0 auto' }}>
+                <h2 style={{ marginBottom: 8 }}>連線失敗</h2>
+                <pre style={{ whiteSpace: 'pre-wrap' }}>{error}</pre>
+                <p style={{ marginTop: 12 }}>
+                  排查順序建議：先確認 backend 是否在 <code>http://localhost:8080</code>，
+                  再確認 docker compose 的服務是否都起來。
+                </p>
+              </div>
+            )}
 
-          <div style={{ textAlign: 'left', maxWidth: 720, margin: '20px auto 0' }}>
-            <h2 style={{ marginBottom: 8 }}>W02 驗收：Lots 清單（GET /api/lots）</h2>
-            {lotsLoading && <p>載入 lots 中…</p>}
-            {!lotsLoading && lotsError && (
-              <pre style={{ whiteSpace: 'pre-wrap' }}>{lotsError}</pre>
-            )}
-            {!lotsLoading && !lotsError && lots && (
-              <>
-                <p style={{ marginBottom: 8 }}>共 {lots.length} 筆（seed 應該至少有 5 筆）</p>
-                {/* 為什麼用 <pre>：
-                    - 新手先求看得到資料；等你熟了再做表格與分頁。 */}
-                <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>
-                  {JSON.stringify(lots, null, 2)}
-                </pre>
-              </>
-            )}
-          </div>
-
-          <div style={{ textAlign: 'left', maxWidth: 720, margin: '20px auto 0' }}>
-            <h2 style={{ marginBottom: 8 }}>W02 擴充：Tools 清單（GET /api/tools）</h2>
-            {toolsLoading && <p>載入 tools 中…</p>}
-            {!toolsLoading && toolsError && (
-              <pre style={{ whiteSpace: 'pre-wrap' }}>{toolsError}</pre>
-            )}
-            {!toolsLoading && !toolsError && tools && (
-              <>
-                <p style={{ marginBottom: 8 }}>共 {tools.length} 筆（seed 應該至少有 2 筆）</p>
-                <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>
-                  {JSON.stringify(tools, null, 2)}
-                </pre>
-              </>
-            )}
-          </div>
-
-          <div style={{ textAlign: 'left', maxWidth: 720, margin: '20px auto 0' }}>
-            <h2 style={{ marginBottom: 8 }}>W02 擴充：Defects 清單（GET /api/defects）</h2>
-            {defectsLoading && <p>載入 defects 中…</p>}
-            {!defectsLoading && defectsError && (
-              <pre style={{ whiteSpace: 'pre-wrap' }}>{defectsError}</pre>
-            )}
-            {!defectsLoading && !defectsError && defects && (
-              <>
-                <p style={{ marginBottom: 8 }}>共 {defects.length} 筆（seed 應該至少有 1 筆）</p>
-                <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>
-                  {JSON.stringify(defects, null, 2)}
-                </pre>
-              </>
-            )}
-          </div>
-
-          <div style={{ textAlign: 'left', maxWidth: 720, margin: '20px auto 0' }}>
-            <h2 style={{ marginBottom: 8 }}>W05 預備：Defect Detail（GET /api/defects/{'{id}'})</h2>
-            <p style={{ marginBottom: 8 }}>
-              先輸入 defect id 來驗收 detail API（之後做正式頁面再搬過去）。
-            </p>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <label>
-                Defect Id：
-                <input
-                  value={selectedDefectId}
-                  onChange={(e) => setSelectedDefectId(e.target.value)}
-                  style={{ marginLeft: 8, width: 360 }}
-                  placeholder="貼上 /api/defects 清單中的 id"
-                />
-              </label>
-              <button
-                type="button"
-                onClick={() => {
-                  // 這個按鈕只是讓新手「手動重抓」更直覺；
-                  // 實際上 useEffect 也會自動抓，不會影響功能。
-                  setSelectedDefectId((x) => x.trim())
+            {!loading && !error && data && (
+              <div
+                style={{
+                  textAlign: 'left',
+                  maxWidth: 720,
+                  margin: '0 auto',
+                  background: 'rgba(15,23,42,0.55)',
+                  border: '1px solid rgba(148,163,184,0.18)',
+                  borderRadius: 14,
+                  padding: '14px 14px 12px',
                 }}
               >
-                重新讀取
-              </button>
+                <h2 style={{ marginBottom: 8 }}>連線成功</h2>
+                <ul>
+                  <li>
+                    後端是否能連 DB：<strong>{String(data.canConnect)}</strong>
+                  </li>
+                  <li>
+                    <code>tools</code> 資料表是否存在（用來判斷 schema 是否已建立）：
+                    <strong> {String(data.toolsTableExists)}</strong>
+                  </li>
+                </ul>
+                <p style={{ marginTop: 12 }}>
+                  下一步（W02）：你應該也能打得通 <code>/api/lots</code>，並在下方看到 lot 清單。
+                </p>
+              </div>
+            )}
+
+            <div style={{ textAlign: 'left', maxWidth: 720, margin: '20px auto 0' }}>
+              <h2 style={{ marginBottom: 8 }}>W02 驗收：Lots 清單（GET /api/lots）</h2>
+              {lotsLoading && <p>載入 lots 中…</p>}
+              {!lotsLoading && lotsError && <pre style={{ whiteSpace: 'pre-wrap' }}>{lotsError}</pre>}
+              {!lotsLoading && !lotsError && lots && (
+                <>
+                  <p style={{ marginBottom: 8 }}>共 {lots.length} 筆（seed 應該至少有 5 筆）</p>
+                  {/* 為什麼用 <pre>：
+                      - 新手先求看得到資料；等你熟了再做表格與分頁。 */}
+                  <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>
+                    {JSON.stringify(lots, null, 2)}
+                  </pre>
+                </>
+              )}
             </div>
 
-            {detailLoading && <p>載入 detail 中…</p>}
-            {!detailLoading && detailError && <pre style={{ whiteSpace: 'pre-wrap' }}>{detailError}</pre>}
-            {!detailLoading && !detailError && detail && (
-              <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>
-                {JSON.stringify(detail, null, 2)}
-              </pre>
-            )}
+            <div style={{ textAlign: 'left', maxWidth: 720, margin: '20px auto 0' }}>
+              <h2 style={{ marginBottom: 8 }}>W02 擴充：Tools 清單（GET /api/tools）</h2>
+              {toolsLoading && <p>載入 tools 中…</p>}
+              {!toolsLoading && toolsError && <pre style={{ whiteSpace: 'pre-wrap' }}>{toolsError}</pre>}
+              {!toolsLoading && !toolsError && tools && (
+                <>
+                  <p style={{ marginBottom: 8 }}>共 {tools.length} 筆（seed 應該至少有 2 筆）</p>
+                  <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>
+                    {JSON.stringify(tools, null, 2)}
+                  </pre>
+                </>
+              )}
+            </div>
+
+            <div style={{ textAlign: 'left', maxWidth: 720, margin: '20px auto 0' }}>
+              <h2 style={{ marginBottom: 8 }}>W02 擴充：Defects 清單（GET /api/defects）</h2>
+              {defectsLoading && <p>載入 defects 中…</p>}
+              {!defectsLoading && defectsError && <pre style={{ whiteSpace: 'pre-wrap' }}>{defectsError}</pre>}
+              {!defectsLoading && !defectsError && defects && (
+                <>
+                  <p style={{ marginBottom: 8 }}>共 {defects.length} 筆（seed 應該至少有 1 筆）</p>
+                  <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>
+                    {JSON.stringify(defects, null, 2)}
+                  </pre>
+                </>
+              )}
+            </div>
+
+            <div style={{ textAlign: 'left', maxWidth: 720, margin: '20px auto 0' }}>
+              <h2 style={{ marginBottom: 8 }}>W05 預備：Defect Detail（GET /api/defects/{'{id}'})</h2>
+              <p style={{ marginBottom: 8 }}>
+                先輸入 defect id 來驗收 detail API（之後做正式頁面再搬過去）。
+              </p>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <label>
+                  Defect Id：
+                  <input
+                    value={selectedDefectId}
+                    onChange={(e) => setSelectedDefectId(e.target.value)}
+                    style={{ marginLeft: 8, width: 360 }}
+                    placeholder="貼上 /api/defects 清單中的 id"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    // 這個按鈕只是讓新手「手動重抓」更直覺；
+                    // 實際上 useEffect 也會自動抓，不會影響功能。
+                    setSelectedDefectId((x) => x.trim())
+                  }}
+                >
+                  重新讀取
+                </button>
+              </div>
+
+              {detailLoading && <p>載入 detail 中…</p>}
+              {!detailLoading && detailError && <pre style={{ whiteSpace: 'pre-wrap' }}>{detailError}</pre>}
+              {!detailLoading && !detailError && detail && (
+                <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>
+                  {JSON.stringify(detail, null, 2)}
+                </pre>
+              )}
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
       )}
     </>
   )

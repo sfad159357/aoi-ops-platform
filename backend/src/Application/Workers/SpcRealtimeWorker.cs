@@ -30,6 +30,7 @@ public sealed class SpcRealtimeWorker : IKafkaMessageHandler
     private readonly ISpcHubBroker _hubBroker;
     private readonly DomainProfileService _profile;
     private readonly IRealtimeMetrics _metrics;
+    private readonly ISpcMeasurementSink _measurementSink;
     private readonly ILogger<SpcRealtimeWorker> _logger;
 
     /// <summary>
@@ -43,12 +44,14 @@ public sealed class SpcRealtimeWorker : IKafkaMessageHandler
         ISpcHubBroker hubBroker,
         DomainProfileService profile,
         IRealtimeMetrics metrics,
+        ISpcMeasurementSink measurementSink,
         IConfiguration configuration,
         ILogger<SpcRealtimeWorker> logger)
     {
         _hubBroker = hubBroker;
         _profile = profile;
         _metrics = metrics;
+        _measurementSink = measurementSink;
         _logger = logger;
         Topic = configuration["Messaging:Kafka:TopicInspectionRaw"] ?? "aoi.inspection.raw";
     }
@@ -73,7 +76,15 @@ public sealed class SpcRealtimeWorker : IKafkaMessageHandler
         // 為什麼跑「所有 profile parameters」一輪：
         // - 同一筆量測訊息可能同時帶 yield_rate / temperature / pressure；
         //   依 profile 設定逐個對應、有值才送，省掉硬編 if 分支。
-        var lineCode = InferLineCodeFromTool(evt.ToolCode);
+        // 為什麼優先用 evt.LineCode：
+        // - ingestion 端已經把產線與站別寫進 payload（與 panels.tools 主檔一致），
+        //   Worker 直接吃比 InferLineCodeFromTool 推斷穩定；推斷只當 fallback。
+        var lineCode = !string.IsNullOrEmpty(evt.LineCode) ? evt.LineCode : InferLineCodeFromTool(evt.ToolCode);
+        // 為什麼 panelNo 優先用 evt.PanelNo：
+        // - ingestion 已經組好（lot_no-wafer_no），直接吃避免兩端格式不一致。
+        var panelNo = !string.IsNullOrEmpty(evt.PanelNo)
+            ? evt.PanelNo
+            : (string.IsNullOrEmpty(evt.LotNo) ? null : $"{evt.LotNo}-{evt.WaferNo}");
 
         foreach (var parameter in _profile.Current.Parameters)
         {
@@ -82,9 +93,10 @@ public sealed class SpcRealtimeWorker : IKafkaMessageHandler
 
             var key2 = $"{lineCode}|{evt.ToolCode}|{parameter.Code}";
             var state = _windows.GetOrAdd(key2, _ => new SpcWindowState(capacity: 25));
-            var window = state.Add(v.Value);
+            var snap = state.Add(v.Value);
+            var window = snap.Window;
 
-            var payload = SpcRulesEngine.Evaluate(
+            var rawPayload = SpcRulesEngine.Evaluate(
                 window: window,
                 lineCode: lineCode,
                 toolCode: evt.ToolCode,
@@ -92,7 +104,43 @@ public sealed class SpcRealtimeWorker : IKafkaMessageHandler
                 usl: parameter.Usl,
                 lsl: parameter.Lsl,
                 target: parameter.Target,
-                timestamp: evt.Timestamp);
+                timestamp: evt.Timestamp,
+                inspectedQty: evt.InspectedQty,
+                fixedCl: snap.Baseline?.Cl,
+                fixedSigma: snap.Baseline?.Sigma);
+            // 為什麼用 with 補 lot/wafer/station/operator：
+            // - 規則引擎只做數值與違規；追溯欄位（lot/panel/station/operator）由原始事件帶入，避免引擎簽名爆炸。
+            // - 前端 SPC 頁面要在點上同時顯示「機台、站別、操作員、批次、板號」，這些欄位必須一路 push 到 SignalR。
+            var payload = rawPayload with
+            {
+                LotNo = string.IsNullOrEmpty(evt.LotNo) ? null : evt.LotNo,
+                WaferNo = evt.WaferNo,
+                StationCode = evt.StationCode,
+                PanelNo = panelNo,
+                OperatorCode = evt.OperatorCode,
+                OperatorName = evt.OperatorName,
+            };
+
+            // 為什麼這裡 enqueue 一筆 spc_measurement：
+            // - 即時 stream 是「易失」資料（重新整理就沒），落地後可做歷史曲線與報表；
+            // - sink 內部用 Channel + batch flush，不會卡住 Kafka 處理迴圈。
+            var violationCodes = payload.Violations.Count == 0
+                ? null
+                : string.Join(",", payload.Violations.Select(v => $"SPC-{v.RuleId}"));
+            _measurementSink.Enqueue(new SpcMeasurementWriteRequest(
+                LineCode: lineCode,
+                ToolCode: evt.ToolCode,
+                ParameterCode: parameter.Code,
+                PanelNo: panelNo,
+                StationCode: evt.StationCode,
+                Value: (decimal)payload.Value,
+                MeasuredAt: payload.Timestamp,
+                IsViolation: payload.Violations.Count > 0,
+                ViolationCodes: violationCodes,
+                KafkaEventId: evt.EventId,
+                LotNo: string.IsNullOrEmpty(evt.LotNo) ? null : evt.LotNo,
+                OperatorCode: evt.OperatorCode,
+                OperatorName: evt.OperatorName));
 
             // 為什麼從 push 前 Stopwatch.Start：
             // - W11 想量測「我們把訊息送進 SignalR 的成本」，不是 Kafka 反序列化或規則計算的成本，
@@ -121,11 +169,28 @@ public sealed class SpcRealtimeWorker : IKafkaMessageHandler
     private static double? ExtractParameterValue(SpcInspectionEvent evt, string parameterCode)
         => parameterCode.ToLowerInvariant() switch
         {
-            "yield_rate" => evt.YieldRate,
+            // 為什麼良率要 NormalizeYieldToRatio 而不是直接用 Raw：
+            // - ingestion 模擬器送 0~100（例 97.2 = 97.2%），domain profile / SpcRulesEngine 與 JSON usl=1.0
+            //   皆假設 0~1 比例；不轉會讓 UCL/CL/LCL、Cpk 與前端 (×100) 全錯、良率可顯示成 9000%+
+            "yield_rate" => NormalizeYieldToRatio(evt.YieldRate),
             "temperature" => evt.Temperature,
             "pressure" => evt.Pressure,
             _ => null,
         };
+
+    /// <summary>
+    /// 將 Kafka/設備可能送出的良率（0~1 或 0~100）統一為 0~1，與 profile 及 DB 寫入慣例一致。
+    /// </summary>
+    /// <remarks>
+    /// 解決什麼問題：避免同一欄位混用「比例」與「百分比」兩種刻度，造成 SPC 規則與儀表板同時失效。
+    /// 對齊 services/ingestion process_runs：值 &gt; 1 時視為百分度並除以 100。
+    /// </remarks>
+    private static double? NormalizeYieldToRatio(double? v)
+    {
+        if (v is null) return null;
+        if (v.Value > 1.0) return v.Value / 100.0;
+        return v.Value;
+    }
 
     /// <summary>
     /// 用 toolCode prefix 推斷 line code（例：SMT-A01 → SMT-A）。
@@ -217,10 +282,26 @@ public sealed class SpcRealtimeWorker : IKafkaMessageHandler
         public double? Pressure { get; set; }
         [JsonPropertyName("yield_rate")]
         public double? YieldRate { get; set; }
+        /// <summary>本則事件檢驗件數；缺省 1。與 KPI 累積產出、件/小時對帳。</summary>
+        [JsonPropertyName("inspected_qty")]
+        public int InspectedQty { get; set; } = 1;
+        // 為什麼把以下五個欄位也吃進 DTO：
+        // - 來源 ingestion 端已經寫齊，下游 SPC measurement / SignalR payload 直接用，避免兩端字串格式不一致。
+        [JsonPropertyName("line_code")]
+        public string? LineCode { get; set; }
+        [JsonPropertyName("station_code")]
+        public string? StationCode { get; set; }
+        [JsonPropertyName("panel_no")]
+        public string? PanelNo { get; set; }
+        [JsonPropertyName("operator_code")]
+        public string? OperatorCode { get; set; }
+        [JsonPropertyName("operator_name")]
+        public string? OperatorName { get; set; }
 
         public SpcInspectionEvent? ToEvent()
         {
             if (string.IsNullOrEmpty(ToolCode)) return null;
+            var q = InspectedQty < 1 ? 1 : InspectedQty;
             return new SpcInspectionEvent(
                 EventId ?? Guid.NewGuid().ToString(),
                 ToolCode,
@@ -229,7 +310,13 @@ public sealed class SpcRealtimeWorker : IKafkaMessageHandler
                 Timestamp ?? DateTimeOffset.UtcNow,
                 Temperature,
                 Pressure,
-                YieldRate);
+                YieldRate,
+                q,
+                LineCode,
+                StationCode,
+                PanelNo,
+                OperatorCode,
+                OperatorName);
         }
     }
 }

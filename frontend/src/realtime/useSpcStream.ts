@@ -32,6 +32,20 @@ export type SpcPointPayload = {
   lcl: number
   cpk: number | null
   violations: SpcRuleViolation[]
+  /** 本點對應檢驗事件之件數（預設 1）；累積產出 = 視窗內加總，與圖上點數可並存對帳 */
+  inspectedQty?: number
+  /** 批次／工單號（對應 Kafka lot_no） */
+  lotNo?: string | null
+  /** 板號／晶圓序號（對應 Kafka wafer_no） */
+  waferNo?: number | null
+  // 為什麼補 stationCode / panelNo / operator：
+  // - SpcRealtimeWorker 已將此資訊一路 push 過來；
+  //   SPC dashboard / ViolationTable 要在點上同時顯示「機台、站別、操作員、批次、板號」，
+  //   讓使用者能依違規點直接知道責任歸屬。
+  stationCode?: string | null
+  panelNo?: string | null
+  operatorCode?: string | null
+  operatorName?: string | null
 }
 
 export type SpcRuleViolation = {

@@ -25,6 +25,14 @@ type ApiWorkorder = {
   sourceQueue: string | null
   createdAt: string
   lotNo: string | null
+  panelNo: string | null
+  toolCode: string | null
+  lineCode: string | null
+  stationCode: string | null
+  operatorCode: string | null
+  operatorName: string | null
+  severity: string | null
+  defectCode: string | null
 }
 
 function toEvent(w: ApiWorkorder): WorkorderEvent {
@@ -35,7 +43,14 @@ function toEvent(w: ApiWorkorder): WorkorderEvent {
     status: w.status,
     createdAt: w.createdAt,
     lotNo: w.lotNo,
-    severity: null,
+    severity: w.severity,
+    panelNo: w.panelNo,
+    toolCode: w.toolCode,
+    lineCode: w.lineCode,
+    stationCode: w.stationCode,
+    operatorCode: w.operatorCode,
+    operatorName: w.operatorName,
+    defectCode: w.defectCode,
   }
 }
 
@@ -136,14 +151,20 @@ export default function WorkordersPage() {
               <th style={thStyle}>工單編號</th>
               <th style={thStyle}>優先級</th>
               <th style={thStyle}>狀態</th>
+              <th style={thStyle}>產線</th>
+              <th style={thStyle}>站別</th>
+              <th style={thStyle}>機台</th>
               <th style={thStyle}>{profile.entities.lot.labelZh ?? '工單批次'}</th>
+              <th style={thStyle}>板號</th>
+              <th style={thStyle}>缺陷碼</th>
+              <th style={thStyle}>負責人</th>
             </tr>
           </thead>
           <tbody>
             {grouped.map(([ymd, items]) => (
               <Fragment key={`group-${ymd}`}>
                 <tr>
-                  <td colSpan={5} style={groupHeaderStyle}>
+                  <td colSpan={11} style={groupHeaderStyle}>
                     {ymd}（{items.length} 筆）
                   </td>
                 </tr>
@@ -162,14 +183,20 @@ export default function WorkordersPage() {
                       <PriorityBadge priority={w.priority} />
                     </td>
                     <td style={tdStyle}>{w.status ?? '-'}</td>
+                    <td style={tdMonoStyle}>{w.lineCode ?? '-'}</td>
+                    <td style={tdMonoStyle}>{w.stationCode ?? '-'}</td>
+                    <td style={tdMonoStyle}>{w.toolCode ?? '-'}</td>
                     <td style={tdMonoStyle}>{w.lotNo ?? '-'}</td>
+                    <td style={tdMonoStyle}>{w.panelNo ?? '-'}</td>
+                    <td style={tdMonoStyle}>{w.defectCode ?? '-'}</td>
+                    <td style={tdStyle}>{formatOperator(w.operatorCode, w.operatorName)}</td>
                   </tr>
                 ))}
               </Fragment>
             ))}
             {filteredWorkorders.length === 0 && (
               <tr>
-                <td colSpan={5} style={{ ...tdStyle, textAlign: 'center', color: '#6b7280', padding: 24 }}>
+                <td colSpan={11} style={{ ...tdStyle, textAlign: 'center', color: '#6b7280', padding: 24 }}>
                   這一天沒有任何工單（或尚未收到即時事件）。觸發一次高嚴重度 defect 後即可看到 P1 工單。
                 </td>
               </tr>
@@ -199,6 +226,14 @@ function PriorityBadge({ priority }: { priority: string | null }) {
       {priority ?? '-'}
     </span>
   )
+}
+
+// 為什麼把作業員顯示寫成 helper：
+// - 與 AlarmsPage 一致的「OP-001 王小明」格式，避免兩個頁面寫不同邏輯。
+function formatOperator(code: string | null, name: string | null): string {
+  if (!code && !name) return '-'
+  if (code && name) return `${code} ${name}`
+  return code ?? name ?? '-'
 }
 
 function priorityPalette(priority: string): { fg: string; bg: string } {

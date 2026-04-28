@@ -18,5 +18,6 @@ public sealed class DocumentChunk
     public string? EmbeddingId { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; }
-}
 
+    public Document? Document { get; set; }
+}

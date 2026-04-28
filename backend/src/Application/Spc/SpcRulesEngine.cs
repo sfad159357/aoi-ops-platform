@@ -44,16 +44,44 @@ public static class SpcRulesEngine
         double usl,
         double lsl,
         double target,
-        DateTimeOffset timestamp)
+        DateTimeOffset timestamp,
+        int inspectedQty = 1,
+        double? fixedCl = null,
+        double? fixedSigma = null)
     {
         if (window.Count == 0) throw new ArgumentException("window 不能為空", nameof(window));
 
         var capability = ProcessCapability.Calculate(window, usl, lsl, target);
-        // 為什麼用樣本平均當 CL：
-        // - 真實工廠 CL 通常先用「過去歷史均值」當基準，但 demo 沒辦法準備歷史；
-        //   用滑動視窗均值作為近似 CL 是合理的折衷，視窗越大越穩定。
-        var cl = capability.Mean;
-        var sigma = capability.Sigma > 0 ? capability.Sigma : 0.0001;
+        // 為什麼 n=1 時要分支：
+        // - ProcessCapability 在樣本數 &lt; 2 回 Empty，Mean=0，若仍當 cl 用會讓 UCL/LCL 縮在 0 附近、幾乎「每點都超過 ±3σ」（Rule1 全紅）；
+        //   單點用該點當暫時 CL、σ 用規格寬度的保守比例估計，圖上線才合理。
+        double cl;
+        double sigma;
+        var specSpan = Math.Max(usl - lsl, 1e-9);
+        // 固定管制線（baseline）優先：
+        // - 使用者要求「先收 20~25 點穩定件數 → 計算 X̄̄、σ → 後續水平固定」；
+        // - fixedCl/fixedSigma 由 SpcWindowState 在收滿 baseline 時鎖定，後續 Evaluate 全程沿用。
+        if (fixedCl.HasValue && fixedSigma.HasValue && fixedSigma.Value > 0 && !double.IsNaN(fixedSigma.Value))
+        {
+            cl = fixedCl.Value;
+            sigma = fixedSigma.Value;
+        }
+        else if (window.Count < 2)
+        {
+            cl = window[0];
+            sigma = Math.Max(specSpan / 30.0, 1e-5);
+        }
+        else if (capability.Sigma > 0 && !double.IsNaN(capability.Sigma))
+        {
+            cl = capability.Mean;
+            sigma = capability.Sigma;
+        }
+        else
+        {
+            // σ 估不出（例如兩點同值）：避免用 0.0001 造成管制線太窄
+            cl = capability.Mean;
+            sigma = Math.Max(specSpan / 30.0, 1e-5);
+        }
         var ucl = cl + 3 * sigma;
         var lcl = cl - 3 * sigma;
 
@@ -81,6 +109,20 @@ public static class SpcRulesEngine
                 Description: $"量測值 {latest:0.###} 低於 LSL {lsl:0.###}"));
         }
 
+        var q = inspectedQty < 1 ? 1 : inspectedQty;
+        // Cpk：固定管制線模式下，Cpk 也要跟著 baseline 的 mean/σ 算，才不會每點亂跳。
+        double? cpk;
+        if (sigma > 0 && !double.IsNaN(sigma))
+        {
+            var cpu = (usl - cl) / (3 * sigma);
+            var cpl = (cl - lsl) / (3 * sigma);
+            cpk = Math.Min(cpu, cpl);
+        }
+        else
+        {
+            cpk = capability.Cpk;
+        }
+
         return new SpcPointPayload(
             LineCode: lineCode,
             ToolCode: toolCode,
@@ -92,8 +134,9 @@ public static class SpcRulesEngine
             Ucl: ucl,
             Cl: cl,
             Lcl: lcl,
-            Cpk: capability.Cpk,
-            Violations: violations);
+            Cpk: cpk,
+            Violations: violations,
+            InspectedQty: q);
     }
 
     /// <summary>

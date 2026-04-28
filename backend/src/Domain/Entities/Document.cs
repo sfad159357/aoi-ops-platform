@@ -18,5 +18,6 @@ public sealed class Document
     public string? SourcePath { get; set; }
 
     public DateTimeOffset UploadedAt { get; set; }
-}
 
+    public ICollection<DocumentChunk> Chunks { get; set; } = new List<DocumentChunk>();
+}

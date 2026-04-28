@@ -25,6 +25,11 @@ export type StationLog = {
   exitedAt: string | null
   result: string | null
   operator: string | null
+  // 為什麼補 operatorName / toolCode：
+  // - 後端 StationLogDto 已新增這兩個欄位（panel_station_log 已冗餘儲存），
+  //   前端時間軸卡片要顯示「OP-001 王小明 / SMT-A01」這種人機並列。
+  operatorName: string | null
+  toolCode: string | null
   note: string | null
 }
 

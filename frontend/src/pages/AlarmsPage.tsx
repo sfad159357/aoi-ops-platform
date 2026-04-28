@@ -26,14 +26,20 @@ type ApiAlarm = {
   status: string | null
   source: string | null
   toolCode: string | null
+  lineCode: string | null
+  stationCode: string | null
+  lotNo: string | null
+  panelNo: string | null
+  operatorCode: string | null
+  operatorName: string | null
 }
 
 /**
  * 把 REST 回傳的 ApiAlarm 轉成 hook buffer 期望的 AlarmEvent。
  *
  * 為什麼要轉：
- * - REST 回傳沒有 lotNo（為了避免額外 join 拖慢 list），但 hook event 型別有；
- *   統一型別比較不會在 row render 時又判斷 null。
+ * - REST 與 SignalR 兩條來源型別差異不大（皆是 alarms 表的 DTO），
+ *   有專用 toEvent 可保留欄位 mapping 在一個地方，未來新增欄位只需動這裡與 hook。
  */
 function toEvent(a: ApiAlarm): AlarmEvent {
   return {
@@ -45,7 +51,12 @@ function toEvent(a: ApiAlarm): AlarmEvent {
     status: a.status,
     source: a.source,
     toolCode: a.toolCode,
-    lotNo: null,
+    lineCode: a.lineCode,
+    stationCode: a.stationCode,
+    lotNo: a.lotNo,
+    panelNo: a.panelNo,
+    operatorCode: a.operatorCode,
+    operatorName: a.operatorName,
   }
 }
 
@@ -149,18 +160,22 @@ export default function AlarmsPage() {
             <tr style={{ background: '#161b22', color: '#9ca3af', fontSize: 12 }}>
               <th style={thStyle}>觸發時間</th>
               <th style={thStyle}>等級</th>
+              <th style={thStyle}>產線</th>
+              <th style={thStyle}>站別</th>
               <th style={thStyle}>機台</th>
+              <th style={thStyle}>批次</th>
+              <th style={thStyle}>板號</th>
+              <th style={thStyle}>作業員</th>
               <th style={thStyle}>告警碼</th>
               <th style={thStyle}>訊息</th>
               <th style={thStyle}>狀態</th>
-              <th style={thStyle}>來源</th>
             </tr>
           </thead>
           <tbody>
             {grouped.map(([ymd, items]) => (
               <Fragment key={`group-${ymd}`}>
                 <tr key={`group-${ymd}`}>
-                  <td colSpan={7} style={groupHeaderStyle}>
+                  <td colSpan={11} style={groupHeaderStyle}>
                     {ymd}（{items.length} 筆）
                   </td>
                 </tr>
@@ -177,18 +192,22 @@ export default function AlarmsPage() {
                     <td style={tdStyle}>
                       <SeverityBadge level={a.alarmLevel} />
                     </td>
+                    <td style={tdMonoStyle}>{a.lineCode ?? '-'}</td>
+                    <td style={tdMonoStyle}>{a.stationCode ?? '-'}</td>
                     <td style={tdMonoStyle}>{a.toolCode ?? '-'}</td>
+                    <td style={tdMonoStyle}>{a.lotNo ?? '-'}</td>
+                    <td style={tdMonoStyle}>{a.panelNo ?? '-'}</td>
+                    <td style={tdStyle}>{formatOperator(a.operatorCode, a.operatorName)}</td>
                     <td style={tdMonoStyle}>{a.alarmCode}</td>
                     <td style={tdStyle}>{a.message ?? '-'}</td>
                     <td style={tdStyle}>{a.status ?? '-'}</td>
-                    <td style={tdStyle}>{a.source ?? '-'}</td>
                   </tr>
                 ))}
               </Fragment>
             ))}
             {filteredAlarms.length === 0 && (
               <tr>
-                <td colSpan={7} style={{ ...tdStyle, textAlign: 'center', color: '#6b7280', padding: 24 }}>
+                <td colSpan={11} style={{ ...tdStyle, textAlign: 'center', color: '#6b7280', padding: 24 }}>
                   這一天沒有任何告警（或尚未收到即時事件）。請確認 ingestion 容器與 RabbitMQ 已啟動。
                 </td>
               </tr>
@@ -241,6 +260,15 @@ function severityPalette(severity: string): { fg: string; bg: string } {
     default:
       return { fg: '#e5e7eb', bg: '#374151' }
   }
+}
+
+// 為什麼把作業員顯示寫成 helper：
+// - 列表「OP-001 王小明」是常見格式，未來新頁面（工單/物料追溯）也會用同樣模式；
+//   抽 helper 讓四個頁面顯示一致。
+function formatOperator(code: string | null, name: string | null): string {
+  if (!code && !name) return '-'
+  if (code && name) return `${code} ${name}`
+  return code ?? name ?? '-'
 }
 
 function formatTime(iso: string): string {

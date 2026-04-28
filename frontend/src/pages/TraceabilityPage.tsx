@@ -309,6 +309,19 @@ function StationCard({
           <div style={{ fontSize: 11, color: '#9ca3af', fontFamily: 'JetBrains Mono, monospace' }}>
             出站：{log.exitedAt ? formatTime(log.exitedAt) : '進行中'}
           </div>
+          {/* 為什麼把作業員 / 機台補在卡片下半：
+              - 物料追溯查詢頁需要看「誰在哪台機跑這站」才能對接責任歸屬，
+                而 panel_station_log 已冗餘 operatorName / toolCode。 */}
+          {(log.operator || log.operatorName) && (
+            <div style={{ fontSize: 11, color: '#9ca3af', fontFamily: 'JetBrains Mono, monospace' }}>
+              作業員：{log.operator ?? '-'}{log.operatorName ? ` ${log.operatorName}` : ''}
+            </div>
+          )}
+          {log.toolCode && (
+            <div style={{ fontSize: 11, color: '#9ca3af', fontFamily: 'JetBrains Mono, monospace' }}>
+              機台：{log.toolCode}
+            </div>
+          )}
           {log.note && (
             <div style={{ fontSize: 11, color: '#f0b429', marginTop: 4 }}>{log.note}</div>
           )}

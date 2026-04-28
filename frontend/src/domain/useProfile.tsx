@@ -87,6 +87,9 @@ function normalizeProfile(raw: unknown): DomainProfile {
   const idPrefix = (x: any): string | null | undefined => (x?.idPrefix ?? x?.id_prefix)
   const goodThreshold = (x: any): number | null | undefined => (x?.goodThreshold ?? x?.good_threshold)
   const goodThresholdLt = (x: any): number | null | undefined => (x?.goodThresholdLt ?? x?.good_threshold_lt)
+  /** 與後端 definition_zh 對齊，供 KPI 卡顯示指標定義／公式 */
+  const definitionZh = (x: any): string | null | undefined =>
+    x?.definitionZh ?? x?.definition_zh
 
   return {
     profileId: r.profileId ?? r.profile_id ?? 'pcb',
@@ -138,6 +141,7 @@ function normalizeProfile(raw: unknown): DomainProfile {
               k,
               {
                 labelZh: labelZh(v),
+                definitionZh: definitionZh(v) ?? null,
                 goodThreshold: goodThreshold(v) ?? null,
                 goodThresholdLt: goodThresholdLt(v) ?? null,
               },

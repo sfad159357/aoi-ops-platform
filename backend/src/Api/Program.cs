@@ -5,6 +5,7 @@ using AOIOpsPlatform.Application.Domain;
 using AOIOpsPlatform.Application.Hubs;
 using AOIOpsPlatform.Application.Messaging;
 using AOIOpsPlatform.Application.Observability;
+using AOIOpsPlatform.Application.Spc;
 using AOIOpsPlatform.Application.Workers;
 using AOIOpsPlatform.Infrastructure.Data;
 using AOIOpsPlatform.Infrastructure.Messaging;
@@ -124,10 +125,18 @@ try
     // - profile JSON 啟動時讀一次，之後 read-only；singleton 對 IO 友好。
     builder.Services.AddSingleton<DomainProfileService>();
 
+    // 為什麼 SpcMeasurementWriterService 同時註冊成 ISpcMeasurementSink 與 HostedService：
+    // - 它一份實例兩種 hat：對 SpcRealtimeWorker 是 sink（enqueue 用），
+    //   對 host 是 BackgroundService（負責 batch flush 寫 DB）。
+    // - 兩個 service descriptor 都解析到同一個 singleton 實例，避免兩份 Channel。
+    builder.Services.AddSingleton<SpcMeasurementWriterService>();
+    builder.Services.AddSingleton<ISpcMeasurementSink>(sp => sp.GetRequiredService<SpcMeasurementWriterService>());
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<SpcMeasurementWriterService>());
+
     // 為什麼 SpcRealtimeWorker 註冊成 singleton：
     // - Worker 內部維護 ConcurrentDictionary<string, SpcWindowState>，
     //   scoped 會每筆訊息重建一次、視窗永遠是 1 點，規則完全無法觸發。
-    // - upstream 依賴都是 singleton（broker / profile / config / logger），同層註冊不會踩 scope 規則。
+    // - upstream 依賴都是 singleton（broker / profile / config / logger / measurement sink），同層註冊不會踩 scope 規則。
     builder.Services.AddSingleton<IKafkaMessageHandler, SpcRealtimeWorker>();
 
     // 為什麼 RabbitMQ workers 用 scoped：

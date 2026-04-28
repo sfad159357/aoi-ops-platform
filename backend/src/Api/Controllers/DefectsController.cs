@@ -5,15 +5,14 @@ using Microsoft.EntityFrameworkCore;
 namespace AOIOpsPlatform.Api.Controllers;
 
 /// <summary>
-/// Defects API（W02 第三支 list API）。
-/// 為什麼要做 defects list：
-/// - AOI 平台的核心就是「缺陷清單 → 缺陷詳情 → review」。
-/// - 先把 list 做起來，W05 的 defect detail、W06 的 review flow 才有入口。
-///
-/// 解決什麼問題：
-/// - 新手常卡在「資料有了，但不知道 UI 要從哪裡開始」；
-///   defects list 就是最直覺的第一個頁面雛形。
+/// Defects API：列表 + 詳情。
 /// </summary>
+/// <remarks>
+/// 為什麼這次砍掉所有 LEFT JOIN：
+/// - schema 重建後，<c>defects</c> 表已直接帶 <c>tool_code / lot_no / panel_no</c> 冗餘欄位；
+///   DTO 投影只需要 entity 屬性，零 JOIN、零手動 mapping，前端 JSON 也直接對齊。
+/// - 這比起 controller 寫 join 既快（DB 不必跑多表 hash join），也比較不容易在改欄位時破功。
+/// </remarks>
 [ApiController]
 [Route("api/[controller]")]
 public sealed class DefectsController : ControllerBase
@@ -34,11 +33,19 @@ public sealed class DefectsController : ControllerBase
         bool IsFalseAlarm,
         string? KafkaEventId,
         Guid ToolId,
-        string? ToolCode,
+        string ToolCode,
         Guid LotId,
-        string? LotNo,
-        Guid WaferId,
-        string? WaferNo
+        string LotNo,
+        Guid PanelId,
+        string PanelNo,
+        // 為什麼補 line/station/operator：
+        // - 物料追溯查詢、QC review 都需要看「在哪條線哪個站、誰操作的」，避免再回頭 JOIN tools/operators。
+        string? LineCode,
+        string? StationCode,
+        string? OperatorCode,
+        string? OperatorName,
+        decimal? XCoord,
+        decimal? YCoord
     );
 
     public sealed record DefectDetailDto(
@@ -52,12 +59,12 @@ public sealed class DefectsController : ControllerBase
         bool IsFalseAlarm,
         string? KafkaEventId,
         Guid ToolId,
-        string? ToolCode,
+        string ToolCode,
         string? ToolName,
         Guid LotId,
-        string? LotNo,
-        Guid WaferId,
-        string? WaferNo,
+        string LotNo,
+        Guid PanelId,
+        string PanelNo,
         Guid? ProcessRunId,
         IReadOnlyList<object> Images,
         IReadOnlyList<object> Reviews
@@ -66,19 +73,14 @@ public sealed class DefectsController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<DefectListItemDto>>> List(CancellationToken cancellationToken)
     {
-        // 為什麼用 LEFT JOIN（DefaultIfEmpty）：
-        // - MVP 階段資料可能不完整（例如 defect 先進來，但 lot/tool 還沒建好）。
-        // - list API 不應因為關聯缺資料就整支爆掉，所以這裡允許 NULL，讓 UI 至少能顯示 defect 本體。
-        var query =
-            from d in _db.Defects.AsNoTracking()
-            join t in _db.Tools.AsNoTracking() on d.ToolId equals t.Id into dt
-            from t in dt.DefaultIfEmpty()
-            join l in _db.Lots.AsNoTracking() on d.LotId equals l.Id into dl
-            from l in dl.DefaultIfEmpty()
-            join w in _db.Wafers.AsNoTracking() on d.WaferId equals w.Id into dw
-            from w in dw.DefaultIfEmpty()
-            orderby d.DetectedAt descending
-            select new DefectListItemDto(
+        // 為什麼直接 .Select：
+        // - defect 已自帶 tool_code/lot_no/panel_no，省掉 JOIN 與多表 round-trip；
+        // - 排序仍照 detected_at desc 給前端最新優先。
+        var items = await _db.Defects
+            .AsNoTracking()
+            .OrderByDescending(d => d.DetectedAt)
+            .Take(200)
+            .Select(d => new DefectListItemDto(
                 d.Id,
                 d.DefectCode,
                 d.DefectType,
@@ -87,45 +89,39 @@ public sealed class DefectsController : ControllerBase
                 d.IsFalseAlarm,
                 d.KafkaEventId,
                 d.ToolId,
-                t != null ? t.ToolCode : null,
+                d.ToolCode,
                 d.LotId,
-                l != null ? l.LotNo : null,
-                d.WaferId,
-                w != null ? w.WaferNo : null
-            );
-
-        var items = await query
-            .Take(200)
+                d.LotNo,
+                d.PanelId,
+                d.PanelNo,
+                d.LineCode,
+                d.StationCode,
+                d.OperatorCode,
+                d.OperatorName,
+                d.XCoord,
+                d.YCoord
+            ))
             .ToListAsync(cancellationToken);
 
         return Ok(items);
     }
 
     /// <summary>
-    /// 取得 defect 詳情（W05 起點）。
-    /// 為什麼要先做 detail API：
-    /// - UI 從 list 點進去 detail，才像真的 AOI review 系統。
-    /// - 後面要做 image upload / review history，都會掛在 detail 頁。
-    ///
-    /// 解決什麼問題：
-    /// - 新手如果直接做 review flow，會卡在「沒有 detail 頁可以放資訊」；
-    ///   先把 detail 的資料形狀定下來，後面只是在這個 shape 上擴充欄位。
+    /// 取得 defect 詳情。
     /// </summary>
+    /// <remarks>
+    /// 為什麼仍 .Include(Tool)：
+    /// - detail 需要 ToolName（不像 list 只要 ToolCode），這個欄位沒冗餘到 defects；
+    ///   .Include 走 navigation 比再寫 join 直觀，EF 會自動產生 LEFT JOIN。
+    /// </remarks>
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<DefectDetailDto>> Get(Guid id, CancellationToken cancellationToken)
     {
-        // 為什麼這裡也用 LEFT JOIN：
-        // - 允許資料不完整時仍能回傳 defect 本體（MVP/測試資料常見情況）。
-        var query =
-            from d in _db.Defects.AsNoTracking()
-            where d.Id == id
-            join t in _db.Tools.AsNoTracking() on d.ToolId equals t.Id into dt
-            from t in dt.DefaultIfEmpty()
-            join l in _db.Lots.AsNoTracking() on d.LotId equals l.Id into dl
-            from l in dl.DefaultIfEmpty()
-            join w in _db.Wafers.AsNoTracking() on d.WaferId equals w.Id into dw
-            from w in dw.DefaultIfEmpty()
-            select new DefectDetailDto(
+        var item = await _db.Defects
+            .AsNoTracking()
+            .Where(d => d.Id == id)
+            .Include(d => d.Tool)
+            .Select(d => new DefectDetailDto(
                 d.Id,
                 d.DefectCode,
                 d.DefectType,
@@ -136,18 +132,18 @@ public sealed class DefectsController : ControllerBase
                 d.IsFalseAlarm,
                 d.KafkaEventId,
                 d.ToolId,
-                t != null ? t.ToolCode : null,
-                t != null ? t.ToolName : null,
+                d.ToolCode,
+                d.Tool != null ? d.Tool.ToolName : null,
                 d.LotId,
-                l != null ? l.LotNo : null,
-                d.WaferId,
-                w != null ? w.WaferNo : null,
+                d.LotNo,
+                d.PanelId,
+                d.PanelNo,
                 d.ProcessRunId,
                 Array.Empty<object>(),
                 Array.Empty<object>()
-            );
+            ))
+            .FirstOrDefaultAsync(cancellationToken);
 
-        var item = await query.FirstOrDefaultAsync(cancellationToken);
         if (item is null)
         {
             return NotFound(new { message = "defect not found", id });
@@ -156,4 +152,3 @@ public sealed class DefectsController : ControllerBase
         return Ok(item);
     }
 }
-

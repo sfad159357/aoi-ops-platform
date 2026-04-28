@@ -2,18 +2,49 @@ namespace AOIOpsPlatform.Domain.Entities;
 
 /// <summary>
 /// Workorder（工單）。
-/// 為什麼需要它：
-/// - 架構加入 RabbitMQ 的 `workorder` queue 後，代表系統會收到「需要開工單」的業務事件。
-/// - 我們用一張表把工單落地，才能在 Defect Review 流程中追蹤「這個 defect 是否已經有對應工單」。
-///
-/// 解決什麼問題：
-/// - 若只用訊息不落 DB，你很難做查詢、稽核、或在 UI 顯示「工單狀態」。
 /// </summary>
+/// <remarks>
+/// 為什麼新增 LotNo 冗餘欄位：
+/// - 原本 WorkordersController 用 GroupJoin 才能拿到 lot_no，每次需要做 select-many；
+///   冗餘後直接 Select Workorder entity 即可。
+/// - 工單建立時就把 lot_no 字串帶入，後續即使 lots 表偶爾被刪也不影響顯示（保留歷史快照）。
+/// </remarks>
 public sealed class Workorder
 {
     public Guid Id { get; set; }
 
     public Guid? LotId { get; set; }
+
+    public Guid? ToolId { get; set; }
+
+    public Guid? PanelId { get; set; }
+
+    /// <summary>冗餘：建立工單當下的 lot_no 字串，免 JOIN。</summary>
+    public string? LotNo { get; set; }
+
+    /// <summary>冗餘：板號，免 JOIN。</summary>
+    public string? PanelNo { get; set; }
+
+    /// <summary>冗餘：機台代碼，免 JOIN。</summary>
+    public string? ToolCode { get; set; }
+
+    /// <summary>冗餘：產線代碼。</summary>
+    public string? LineCode { get; set; }
+
+    /// <summary>冗餘：站別代碼。</summary>
+    public string? StationCode { get; set; }
+
+    /// <summary>冗餘：開單人/責任人 OperatorCode。</summary>
+    public string? OperatorCode { get; set; }
+
+    /// <summary>冗餘：開單人顯示名稱。</summary>
+    public string? OperatorName { get; set; }
+
+    /// <summary>冗餘：嚴重度（high/medium/low），與優先級對應。</summary>
+    public string? Severity { get; set; }
+
+    /// <summary>冗餘：缺陷代碼（觸發此工單的 defect_code）。</summary>
+    public string? DefectCode { get; set; }
 
     public string WorkorderNo { get; set; } = null!;
 
@@ -28,5 +59,8 @@ public sealed class Workorder
     public string SourceQueue { get; set; } = "workorder";
 
     public DateTimeOffset CreatedAt { get; set; }
-}
 
+    public Lot? Lot { get; set; }
+    public Tool? Tool { get; set; }
+    public Panel? Panel { get; set; }
+}

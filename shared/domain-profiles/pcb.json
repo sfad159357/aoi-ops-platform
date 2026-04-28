@@ -1,13 +1,13 @@
 {
   "profile_id": "pcb",
-  "display_name": "PCB SMT 產線 MES",
+  "display_name": "PCB產線 MES",
   "factory": {
     "name": "範例：華通電腦",
     "site": "桃園廠"
   },
   "entities": {
     "panel": {
-      "table": "wafers",
+      "table": "panels",
       "label_zh": "板",
       "id_prefix": "PCB"
     },
@@ -49,10 +49,26 @@
     { "id": "trace", "label_zh": "物料追溯查詢" }
   ],
   "kpi": {
-    "yield_rate":      { "label_zh": "綜合良率",   "good_threshold": 0.95 },
+    "yield_rate": {
+      "label_zh": "綜合良率",
+      "good_threshold": 0.95,
+      "definition_zh": "最新一個觀測點（圖上最右點）；與下方管制圖同一 filtered 序列。"
+    },
     "cpk":             { "label_zh": "Cpk 值",      "good_threshold": 1.33 },
-    "violation_today": { "label_zh": "今日違規數", "good_threshold_lt": 5 },
-    "panels_per_hour": { "label_zh": "每小時產出", "good_threshold": 80 }
+    "violation_today": {
+      "label_zh": "今日違規數",
+      "good_threshold_lt": 5,
+      "definition_zh": "本窗內、時間戳屬本日且該觀測點 violations 非空之點數；與圖、累積同 filteredPoints，恒 ≤ N 且累積件數恒 ≥ 此點數。"
+    },
+    "panels_per_hour": {
+      "label_zh": "秒均產出",
+      "good_threshold": 80,
+      "definition_zh": "件/秒＝(Σ inspected_qty)÷首末點時間差(秒)；與累積同 Δt。達標用 profile 之件/小時閾值換算：顯示件/秒 時內部以 ÷3600 比較。"
+    },
+    "cumulative_output": {
+      "label_zh": "累積產出",
+      "definition_zh": "Σ 各觀測點之 inspected_qty（預設 1）；非點數 N，除非每點皆為 1 件。"
+    }
   },
   "wording": {
     "panel_singular":   "板",

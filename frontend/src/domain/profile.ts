@@ -43,6 +43,8 @@ export type DomainMenu = {
 
 export type DomainKpi = {
   labelZh: string
+  /** 可選：指標定義或公式說明（顯示在 KPI 卡下方，不參與運算） */
+  definitionZh?: string | null
   goodThreshold?: number | null
   goodThresholdLt?: number | null
 }

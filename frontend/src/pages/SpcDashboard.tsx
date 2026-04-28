@@ -9,27 +9,38 @@
 // - 工程師打開頁面立刻看到「真實產線推來的點」，不再需要按按鈕觸發計算。
 // - 切換產業 demo 時，所有文案 / 規格 / 站別自動跟著 profile，不需要改任何程式碼。
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { HubConnectionState } from '@microsoft/signalr'
 import { useProfile } from '../domain/useProfile'
-import { useSpcStream } from '../realtime/useSpcStream'
+import { useSpcStream, type SpcPointPayload } from '../realtime/useSpcStream'
 import KpiBar, { type KpiCardData } from '../components/spc/KpiBar'
+import KpiFormulaModal from '../components/spc/KpiFormulaModal'
 import FilterBar, { type FilterBarValue } from '../components/spc/FilterBar'
 import ControlChartPair from '../components/spc/ControlChartPair'
 import ViolationTable from '../components/spc/ViolationTable'
+import {
+  computeObservationWindow,
+  computeTodayYieldRate,
+  computeCorrectedCpk,
+  countTodayViolationQtyInWindow,
+  isBackendViolationPoint,
+  type ObservationWindowStats,
+} from './spcKpiContext'
 
 type Tool = { code: string; label: string }
 
 export default function SpcDashboard() {
   const { profile } = useProfile()
+  const [formulaKey, setFormulaKey] = useState<string | null>(null)
+  const openFormula = useCallback((key: string) => setFormulaKey(key), [])
+  const closeFormula = useCallback(() => setFormulaKey(null), [])
 
-  // 為什麼預設挑 AOI 線：
-  // - 現行 ingestion simulator 的 toolCode 主要是 AOI-A / AOI-B，能確保 demo 一進來就看到即時點；
-  // - 若 profile 沒有 AOI 線，再退回第一條線即可（保持 profile 可擴展性）。
-  const defaultLine = useMemo(
-    () => profile.lines.find((l) => l.code.startsWith('AOI')) ?? profile.lines[0],
-    [profile.lines]
-  )
+  // 為什麼預設挑第一條線（通常是 SMT-A）：
+  // - 我們的 ingestion 會把「站別」(AOI/ICT/...) 與「產線」(SMT-A/SMT-B/...) 分開；
+  //   AOI 是 station，不一定會出現在 lineCode。
+  // - 若預設選到 AOI-A 但 ingestion 實際推的是 SMT-A/SMT-B，就會造成 JoinGroup 的 lineCode 不一致，
+  //   前端看得到畫面但永遠收不到點（最常見的「SPC 沒資料」原因）。
+  const defaultLine = useMemo(() => profile.lines[0], [profile.lines])
 
   // 為什麼預設挑 yield_rate：
   // - profile 一定有「良率」欄位（PCB / 半導體都有意義），demo 開啟就能看到資料。
@@ -79,41 +90,109 @@ export default function SpcDashboard() {
     return violations.filter((v) => v.toolCode === filter.toolCode)
   }, [violations, filter.toolCode])
 
+  // 違規事件表：以「圖上的點」為準，避免出現「點已突破 UCL 但 violation stream 沒推」而漏列的情況。
+  // 為什麼要合併 violations + points：
+  // - violations buffer 代表後端推播的違規事件紀錄（可保留歷史）；
+  // - 但若後端因刻度/規則修正或 edge case 沒推 violation，圖上仍可能顯示超出 UCL/LCL，
+  //   使用者期待表格要跟圖一致，所以補上 points 視窗內的「真實違規點」。
+  const violationEventRows = useMemo(() => {
+    // 以後端規則引擎輸出的 violations/UCL/LCL 為權威，確保表格與 KPI 與後端同一套規則。
+    const fromPoints = filteredPoints.filter(isBackendViolationPoint)
+    const all = [...filteredViolations, ...fromPoints]
+    // 去重：同一筆點可能同時在 violations buffer 與 points 內出現
+    const seen = new Set<string>()
+    const deduped: SpcPointPayload[] = []
+    for (const r of all) {
+      const key = `${r.timestamp}|${r.lineCode}|${r.toolCode}|${r.parameterCode}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      deduped.push(r)
+    }
+    // 最新在前，避免表格跳來跳去
+    deduped.sort((a, b) => (a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0))
+    return deduped.slice(0, 30)
+  }, [filteredPoints, filteredViolations])
+
+  // 今日違規 KPI：與累積、圖表同一 filteredPoints，只計「本日且超出管制線或 Nelson Rule」的件數
+  // 今日違規數要與「累積產出」同量綱（件），才能與今日良率一起對帳
+  const violationTodayCount = useMemo(() => countTodayViolationQtyInWindow(filteredPoints), [filteredPoints])
+  const windowStats = useMemo(() => computeObservationWindow(filteredPoints), [filteredPoints])
+  const qtyPerSec =
+    windowStats != null && windowStats.pointCount >= 2 ? windowStats.qtyPerSecond : null
+  const cumulativeQty = windowStats?.totalInspectedQty ?? 0
+
+  // 今日良率 = (今日累積件 - 今日違規件) / 今日累積件（與違規 KPI 同一分母，可互相對帳）
+  const todayYieldRate = useMemo(
+    () => computeTodayYieldRate(filteredPoints),
+    [filteredPoints],
+  )
+
+  // 前端重算 Cpk：後端因 usl/lsl（0~1 比例）vs value（0~100 百分比）刻度不同，Cpk 會算成 −40。
+  // 用後端給的 cl（mean）與 sigma（同一刻度），再把 usl/lsl 換算到與 value 相同刻度後重算，即可修正。
+  const correctedCpk = useMemo(
+    () => computeCorrectedCpk(filteredPoints.at(-1), parameter?.usl ?? 1, parameter?.lsl ?? 0),
+    [filteredPoints, parameter],
+  )
+
+  // profile 的 good_threshold 仍以「件/小時」填寫；顯示為件/秒 時，達標比輯換算為 threshold/3600
+  const panelsPerSecKpiConfig = useMemo(() => {
+    const c = profile.kpi['panels_per_hour'] ?? { labelZh: '每秒產出' }
+    const t = c.goodThreshold
+    return {
+      ...c,
+      // 文案：使用者要「每秒產出」，不再顯示「每小時」
+      labelZh: '每秒產出',
+      goodThreshold: t != null && !Number.isNaN(t) ? t / 3600 : null,
+    }
+  }, [profile])
+
   const kpis = useMemo<KpiCardData[]>(() => {
     const yieldKpi = profile.kpi['yield_rate']
     const cpkKpi = profile.kpi['cpk']
     const violationKpi = profile.kpi['violation_today']
-    const throughputKpi = profile.kpi['panels_per_hour']
+    const cumulativeKpi = profile.kpi['cumulative_output']
 
-    const latest = filteredPoints.at(-1)
     return [
       {
         key: 'yield_rate',
         config: yieldKpi ?? { labelZh: '良率' },
-        value: latest?.value ?? null,
+        // 今日良率 = (今日累積件 − 今日違規件) / 今日累積件；與違規 KPI 同一分母，可相互對帳。
+        // 退路：若今日尚無資料，顯示 null（KPI 卡呈現「—」）
+        value: todayYieldRate,
         format: 'percent',
       },
       {
         key: 'cpk',
         config: cpkKpi ?? { labelZh: 'Cpk' },
-        value: latest?.cpk ?? null,
+        // 用前端重算的 correctedCpk，避免後端刻度不一致導致顯示 −40 的假負值
+        value: correctedCpk,
         format: 'decimal2',
       },
       {
         key: 'violation_today',
         config: violationKpi ?? { labelZh: '今日違規數' },
-        value: filteredViolations.length,
+        value: violationTodayCount,
         format: 'int',
+        // 為什麼用「件」：與累積產出單位一致（每點 inspected_qty ≥1，違規點數 ≤ 累積件數），
+        // 方便使用者直接比對兩張 KPI 卡，不會誤以為是不同量綱的數字。
+        suffix: ' 件',
       },
       {
         key: 'panels_per_hour',
-        config: throughputKpi ?? { labelZh: '每小時產出' },
-        value: estimateHourlyThroughput(filteredPoints),
+        config: panelsPerSecKpiConfig,
+        value: qtyPerSec,
+        format: 'decimal3',
+        suffix: ' 件/秒',
+      },
+      {
+        key: 'cumulative_output',
+        config: cumulativeKpi ?? { labelZh: '累積產出' },
+        value: windowStats == null ? null : cumulativeQty,
         format: 'int',
-        suffix: profile.wording['panel_plural'] ?? '',
+        suffix: ' 件',
       },
     ]
-  }, [profile, filteredPoints, filteredViolations])
+  }, [profile, cumulativeQty, panelsPerSecKpiConfig, qtyPerSec, violationTodayCount, windowStats])
 
   return (
     <div
@@ -148,7 +227,26 @@ export default function SpcDashboard() {
         </div>
       </div>
 
-      <KpiBar cards={kpis} />
+      <KpiBar cards={kpis} onCardClick={openFormula} />
+      <KpiFormulaModal kpiKey={formulaKey} onClose={closeFormula} />
+
+      {/* 為什麼要獨立一行說明：怕使用者把「良率」與「違規筆數」當成不相干的數字；從 SPC 角度它是同一觀測流上的不同讀法。 */}
+      <div
+        style={{
+          color: '#6b7280',
+          fontSize: 11,
+          lineHeight: 1.5,
+          marginBottom: 12,
+          maxWidth: 960,
+        }}
+      >
+        <SpcKpiNarrative
+          windowStats={windowStats}
+          violationTodayCount={violationTodayCount}
+        />
+      </div>
+
+      <LatestTraceBar point={filteredPoints.at(-1) ?? null} wording={profile.wording} />
 
       <FilterBar
         lines={profile.lines}
@@ -166,11 +264,14 @@ export default function SpcDashboard() {
           usl={parameter?.usl ?? 1}
           lsl={parameter?.lsl ?? 0}
           target={parameter?.target ?? 0.5}
+          cpkOverride={correctedCpk}
         />
 
         <ViolationTable
-          rows={filteredViolations}
+          rows={violationEventRows}
           parameterLabel={parameter?.labelZh ?? filter.parameterCode}
+          usl={parameter?.usl}
+          lsl={parameter?.lsl}
         />
       </div>
 
@@ -221,14 +322,6 @@ function useTools(): Tool[] {
   return tools
 }
 
-function estimateHourlyThroughput(points: { timestamp: string }[]): number | null {
-  if (points.length < 2) return null
-  const first = new Date(points[0].timestamp).getTime()
-  const last = new Date(points[points.length - 1].timestamp).getTime()
-  const hours = Math.max((last - first) / 3_600_000, 1 / 60)
-  return Math.round(points.length / hours)
-}
-
 function labelForState(state: HubConnectionState | 'idle'): string {
   switch (state) {
     case HubConnectionState.Connected:
@@ -250,4 +343,86 @@ const mono: React.CSSProperties = {
   border: '1px solid #21262d',
   padding: '1px 4px',
   borderRadius: 4,
+}
+
+/**
+ * 與 KPI 同源的對帳說明：避免使用者以為「累積」與「件/小時」是兩套獨立 demo 數字。
+ */
+/**
+ * 與產線／機台並列顯示「最新一點」的批次、板號，對齊 Kafka 追溯欄位。
+ */
+function LatestTraceBar({
+  point,
+  wording,
+}: {
+  point: SpcPointPayload | null
+  wording: Record<string, string>
+}) {
+  const lotLabel = wording['lot_id_label'] ?? '批次'
+  const panelLabel = wording['panel_id_label'] ?? '板號'
+  if (!point) {
+    return (
+      <div
+        style={{
+          marginBottom: 12,
+          padding: '8px 12px',
+          background: '#161b22',
+          border: '1px dashed #30363d',
+          borderRadius: 8,
+          fontSize: 12,
+          color: '#6b7280',
+        }}
+      >
+        最新觀測追溯：尚無點（無批次／板號）
+      </div>
+    )
+  }
+  const lot = point.lotNo?.trim() || '—'
+  const wafer = point.waferNo != null && !Number.isNaN(point.waferNo) ? String(point.waferNo) : '—'
+  return (
+    <div
+      style={{
+        marginBottom: 12,
+        padding: '8px 12px',
+        background: '#161b22',
+        border: '1px solid #21262d',
+        borderRadius: 8,
+        fontSize: 12,
+        color: '#9ca3af',
+        fontFamily: 'JetBrains Mono, ui-monospace, monospace',
+      }}
+    >
+      <span style={{ color: '#6b7280', marginRight: 8 }}>最新觀測追溯</span>
+      產線 {point.lineCode} · 機台 {point.toolCode} · {lotLabel} {lot} · {panelLabel} {wafer}
+    </div>
+  )
+}
+
+function SpcKpiNarrative({
+  windowStats,
+  violationTodayCount,
+}: {
+  windowStats: ObservationWindowStats | null
+  violationTodayCount: number
+}) {
+  const intro =
+    '「觀測點」＝一則檢驗事件在圖上一點（n=1）；累積產出＝各點 inspected_qty 加總；件/秒＝累積÷首末點時間差(秒)。良率＝最右觀測點。'
+  if (!windowStats || windowStats.pointCount < 1) {
+    return (
+      <>
+        {intro} 尚無觀測資料。今日違規 {violationTodayCount} 件（與圖、累積同一窗）。
+      </>
+    )
+  }
+  const { pointCount: n, totalInspectedQty: sum, hours: h, qtyPerSecond: qps } = windowStats
+  const check =
+    windowStats.pointCount >= 2
+      ? ` 驗算：累積 ${sum} 件、N=${n} 點、Δt=${h.toFixed(2)} h → 約 ${qps.toFixed(3)} 件/秒（= ${(qps * 3600).toFixed(1)} 件/小時）。`
+      : ` 僅 1 點：累積 ${sum} 件；需至少 2 點才估算件/秒。`
+  return (
+    <>
+      {intro}
+      {check} 今日違規 {violationTodayCount} 件（本窗內超出 UCL/LCL 或 Nelson Rule 的觀測件數，恒 ≤ 累積產出件數）。
+    </>
+  )
 }

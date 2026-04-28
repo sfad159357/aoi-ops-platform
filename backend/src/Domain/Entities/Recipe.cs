@@ -18,5 +18,6 @@ public sealed class Recipe
     public string? Description { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; }
-}
 
+    public ICollection<ProcessRun> ProcessRuns { get; set; } = new List<ProcessRun>();
+}

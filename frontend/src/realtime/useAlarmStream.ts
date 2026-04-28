@@ -20,6 +20,9 @@ import { createHubConnection, safeStopHub } from './signalr'
  * - SignalR / System.Text.Json 預設把 DateTimeOffset 序列化成 ISO 8601 字串，
  *   留 string 比 Date 更貼近 wire format，讓元件決定怎麼格式化。
  */
+// 為什麼把 alarm 事件擴充到 line/station/panel/operator：
+// - AlarmRabbitWorker 已將完整關聯欄位寫進 alarms 表並 push 到 SignalR；
+// - 前端列表要顯示「機台、產線、站別、批次、板號、人員」六個關聯欄位，事件型別必須先對齊。
 export type AlarmEvent = {
   id: string
   alarmCode: string
@@ -29,7 +32,12 @@ export type AlarmEvent = {
   status: string | null
   source: string | null
   toolCode: string | null
+  lineCode: string | null
+  stationCode: string | null
   lotNo: string | null
+  panelNo: string | null
+  operatorCode: string | null
+  operatorName: string | null
 }
 
 export type UseAlarmStreamOptions = {

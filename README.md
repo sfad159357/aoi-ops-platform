@@ -1,6 +1,6 @@
 # AOI Ops Platform
 
-PCB SMT 產線 MES 品質模組：以 **Kafka 即時推播 + .NET Core SignalR** 為骨幹，
+PCB產線 MES 品質模組：以 **Kafka 即時推播 + .NET Core SignalR** 為骨幹，
 即時計算 SPC 八大規則 / Cpk，並以事件驅動方式串接 **工單管理 / 異常記錄 / 物料追溯查詢**。
 
 主軸：**即時生產 → 儲存 → 消費 → API 回傳 → 即時監控 → 即時運算 → 業務模組 → 可追溯查表**。
@@ -194,6 +194,7 @@ aoi-ops-platform/
 - **Demo 腳本（6 分鐘走完整條 PCB 產線）**：[docs/demo-script.md](docs/demo-script.md)
 - **驗收清單**：[docs/acceptance.md](docs/acceptance.md)
 - 即時推播訊息格式：[docs/realtime-signalr.md](docs/realtime-signalr.md)
+- **SPC 儀表板 KPI／管制圖／追溯開發紀錄**：[docs/spc-dashboard-kpi-charts.md](docs/spc-dashboard-kpi-charts.md)
 - 物料追溯資料模型：[docs/traceability.md](docs/traceability.md)
 - Domain Profile 機制：[docs/domain-profile.md](docs/domain-profile.md)
 - 觀測（Logging + Metrics + 情境演練）：[docs/observability.md](docs/observability.md)

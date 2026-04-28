@@ -8,9 +8,9 @@ namespace AOIOpsPlatform.Api.Controllers;
 /// Workorders API。
 /// </summary>
 /// <remarks>
-/// 為什麼跟 Alarms 拆兩支 controller：
-/// - 雖然兩者都是「事件驅動表格」，但工單有 priority / status 篩選需求，
-///   未來會逐步擴張查詢條件；分開後不會互相干擾。
+/// 為什麼這次刪掉 GroupJoin：
+/// - workorders 表已自帶 lot_no 冗餘欄位，建立時由 Worker 寫入；
+///   list query 直接 .Select 即可，避免 SelectMany / DefaultIfEmpty 帶來的 query plan 複雜度。
 /// </remarks>
 [ApiController]
 [Route("api/[controller]")]
@@ -23,13 +23,9 @@ public sealed class WorkordersController : ControllerBase
         _db = db;
     }
 
-    /// <summary>
-    /// 工單列表 DTO。
-    /// </summary>
-    /// <remarks>
-    /// 為什麼不直接回 Lot：
-    /// - 前端清單只需要 lot_no 字串，把 join 結果拍平成一個欄位最省心力。
-    /// </remarks>
+    // 為什麼 DTO 把 panel/tool/line/station/operator/severity 都拋出去：
+    // - 前端工單管理頁要顯示「板、機台、產線、站、開單人、嚴重度」六個關聯欄位；
+    // - workorders 表已自帶這些冗餘欄位，DTO 直接拋出，無 JOIN 成本。
     public sealed record WorkorderListItemDto(
         Guid Id,
         string WorkorderNo,
@@ -37,11 +33,16 @@ public sealed class WorkordersController : ControllerBase
         string? Status,
         string? SourceQueue,
         DateTimeOffset CreatedAt,
-        string? LotNo);
+        string? LotNo,
+        string? PanelNo,
+        string? ToolCode,
+        string? LineCode,
+        string? StationCode,
+        string? OperatorCode,
+        string? OperatorName,
+        string? Severity,
+        string? DefectCode);
 
-    /// <summary>
-    /// 取得近期工單清單，預設回最近 100 筆。
-    /// </summary>
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<WorkorderListItemDto>>> List(
         [FromQuery] int take = 100,
@@ -51,23 +52,24 @@ public sealed class WorkordersController : ControllerBase
 
         var items = await _db.Workorders
             .AsNoTracking()
-            .OrderByDescending(x => x.CreatedAt)
+            .OrderByDescending(w => w.CreatedAt)
             .Take(take)
-            .GroupJoin(
-                _db.Lots.AsNoTracking(),
-                w => w.LotId,
-                l => l.Id,
-                (w, lots) => new { w, lots })
-            .SelectMany(
-                x => x.lots.DefaultIfEmpty(),
-                (x, l) => new WorkorderListItemDto(
-                    x.w.Id,
-                    x.w.WorkorderNo,
-                    x.w.Priority,
-                    x.w.Status,
-                    x.w.SourceQueue,
-                    x.w.CreatedAt,
-                    l != null ? l.LotNo : null))
+            .Select(w => new WorkorderListItemDto(
+                w.Id,
+                w.WorkorderNo,
+                w.Priority,
+                w.Status,
+                w.SourceQueue,
+                w.CreatedAt,
+                w.LotNo,
+                w.PanelNo,
+                w.ToolCode,
+                w.LineCode,
+                w.StationCode,
+                w.OperatorCode,
+                w.OperatorName,
+                w.Severity,
+                w.DefectCode))
             .ToListAsync(cancellationToken);
 
         return Ok(items);

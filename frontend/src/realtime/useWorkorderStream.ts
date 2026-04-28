@@ -12,6 +12,9 @@ import { useEffect, useRef, useState } from 'react'
 import { HubConnection, HubConnectionState } from '@microsoft/signalr'
 import { createHubConnection, safeStopHub } from './signalr'
 
+// 為什麼擴充欄位：
+// - WorkorderRabbitWorker 已將 panel/tool/line/station/operator/defectCode 推到 SignalR，
+//   工單管理頁要能直接渲染這些欄位，事件型別必須先對齊。
 export type WorkorderEvent = {
   id: string
   workorderNo: string
@@ -20,6 +23,13 @@ export type WorkorderEvent = {
   createdAt: string
   lotNo: string | null
   severity: string | null
+  panelNo: string | null
+  toolCode: string | null
+  lineCode: string | null
+  stationCode: string | null
+  operatorCode: string | null
+  operatorName: string | null
+  defectCode: string | null
 }
 
 export type UseWorkorderStreamOptions = {

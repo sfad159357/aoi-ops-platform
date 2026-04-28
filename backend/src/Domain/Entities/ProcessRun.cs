@@ -2,9 +2,12 @@ namespace AOIOpsPlatform.Domain.Entities;
 
 /// <summary>
 /// ProcessRun（一次製程/一次跑片的記錄）。
-/// 目的：承接 tool/recipe/lot/wafer，並保留環境數據與結果，
-/// 讓 dashboard 能做 yield trend 與異常追溯。
 /// </summary>
+/// <remarks>
+/// 為什麼把原本的 WaferId 改成 PanelId：
+/// - 系統已聚焦 PCB 製程，wafer 語意只會讓報表與前端欄位對不上。
+/// - 同步冗餘 ToolCode / LotNo / PanelNo，讓 dashboard 直接 Select 不必 JOIN 三張母表。
+/// </remarks>
 public sealed class ProcessRun
 {
     public Guid Id { get; set; }
@@ -15,7 +18,11 @@ public sealed class ProcessRun
 
     public Guid LotId { get; set; }
 
-    public Guid WaferId { get; set; }
+    public Guid PanelId { get; set; }
+
+    public string ToolCode { get; set; } = null!;
+    public string LotNo { get; set; } = null!;
+    public string PanelNo { get; set; } = null!;
 
     public DateTimeOffset RunStartAt { get; set; }
 
@@ -30,5 +37,12 @@ public sealed class ProcessRun
     public string? ResultStatus { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; }
-}
 
+    public Tool? Tool { get; set; }
+    public Recipe? Recipe { get; set; }
+    public Lot? Lot { get; set; }
+    public Panel? Panel { get; set; }
+
+    public ICollection<Alarm> Alarms { get; set; } = new List<Alarm>();
+    public ICollection<Defect> Defects { get; set; } = new List<Defect>();
+}

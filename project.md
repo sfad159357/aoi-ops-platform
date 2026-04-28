@@ -2,7 +2,7 @@
 
 ## 定位
 
-模擬 **PCB SMT 產線** 的 MES 品質模組（錫膏印刷 → 貼片 → 回焊 → AOI → ICT → FQC），
+模擬 **PCB產線** 的 MES 品質模組（錫膏印刷 → 貼片 → 回焊 → AOI → ICT → FQC），
 以 **Kafka 即時推播 + .NET Core SignalR** 為骨幹，
 即時計算 SPC 八大規則 / Cpk，並以事件驅動方式串接 **工單 / 異常 / 物料追溯** 三組業務模組。
 
@@ -83,7 +83,7 @@ Docker Compose 一鍵拉起：SQL Server / InfluxDB / Kafka / RabbitMQ / 後端 
 - 即時 X̄-R 雙圖（從 Kafka 推來的點，UCL/CL/LCL 即時計算）
 - 八大規則違規偵測（Western Electric Rules，紅 / 黃 / 綠分級）
 - 製程能力：Ca / Cp / Cpk（A+ / A / B / C / D 等級）
-- KPI 卡：良率 / Cpk / 今日違規 / 每小時產出
+- KPI 卡：良率 / Cpk / 今日違規 / 每小時產出 / 累積產出（同一觀測窗：累積＝Σ`inspected_qty`，件/小時＝累積÷Δt，見 profile `kpi.*.definition_zh`）
 
 ### 2) 工單管理
 

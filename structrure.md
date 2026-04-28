@@ -6,7 +6,7 @@ aoi-ops-platform/
         trace.ts                ← 物料追溯 API（連 .NET /api/trace/*）
       components/
         spc/                    ← SPC 元件（W06 重構）
-          KpiBar.tsx            ← 4 KPI 卡（良率 / Cpk / 違規 / 產出）
+          KpiBar.tsx            ← KPI（良率 / Cpk / 今日違規 / 每小時產出 / 累積產出）
           FilterBar.tsx         ← 站別 / 機台 / 參數 filter（控 SignalR group）
           ControlChartPair.tsx  ← X̄ + R 雙圖（recharts）
           ViolationTable.tsx    ← 八大規則違規清單

@@ -110,6 +110,15 @@ public sealed class DomainKpi
 {
     [JsonPropertyName("label_zh")] public string LabelZh { get; init; } = string.Empty;
 
+    /// <summary>
+    /// 可選：指標定義或計算公式（純說明用，不參與運算）。
+    /// </summary>
+    /// <remarks>
+    /// 為什麼要獨立欄位：KPI 名稱變成「總累積計算量」後，必須在畫面上寫清 N 怎麼來，
+    /// 避免與舊的「每小時產出」公式混淆。
+    /// </remarks>
+    [JsonPropertyName("definition_zh")] public string? DefinitionZh { get; init; }
+
     /// <summary>「越大越好」的閾值；超過 == 達標。</summary>
     [JsonPropertyName("good_threshold")] public double? GoodThreshold { get; init; }
 

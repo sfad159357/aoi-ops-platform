@@ -9,16 +9,14 @@ namespace AOIOpsPlatform.Api.Controllers;
 /// 物料追溯 API：對外用 panel_no 當入口。
 /// </summary>
 /// <remarks>
-/// 為什麼用 panel_no（不是 wafer.id）：
-/// - 工程師現場操作習慣是「掃 QR Code 找一張板」，QR Code 寫的是 panel_no；
-///   API 介面直接吃 panel_no，比強迫客戶端先把 panel_no → wafer.id 多一層查詢直接得多。
+/// 為什麼把所有 wafer 用語改成 panel：
+/// - 系統聚焦 PCB 高階製程後，wafers 表已重新命名為 panels；
+///   controller 直接吃 panel.PanelNo 不再需要心算 wafer ↔ panel。
 ///
-/// 為什麼一支 GET 同時回三段（板資訊 + 站別歷程 + 物料 + 同批次）：
-/// - 對應 HTML Tab 2 的 4 個區塊，前端打一支 API 就能畫整頁，
-///   省去多次 round-trip 與多載入狀態管理。
-///
-/// 解決什麼問題：
-/// - 把「為什麼這張板有問題、哪些同批次板可能也有問題」一次回給前端。
+/// 為什麼仍保留 profile.Stations 的 enrich 動作：
+/// - 站別中文 label / 序號是「設定」而非 transaction 資料；
+///   它的單一真相在 profile JSON，DB stations 表只是為了 FK 一致；
+///   控制器在這裡 enrich 顯示用欄位，避免前端再 lookup 一次。
 /// </remarks>
 [ApiController]
 [Route("api/[controller]")]
@@ -47,6 +45,11 @@ public sealed class TraceController : ControllerBase
         DateTimeOffset? ExitedAt,
         string? Result,
         string? Operator,
+        // 為什麼補 OperatorName / ToolCode：
+        // - 前端時間軸要顯示「OP-001 王小明 / SMT-A01」這種人機並列文字，
+        //   而 panel_station_log 已冗餘儲存兩者，DTO 拋出零成本。
+        string? OperatorName,
+        string? ToolCode,
         string? Note);
 
     public sealed record MaterialLotDto(
@@ -81,14 +84,12 @@ public sealed class TraceController : ControllerBase
             return BadRequest(new { error = "panelNo is required" });
         }
 
-        // 為什麼用 join 形式取 panel + lot：
-        // - 前端表頭固定要顯示 lot_no，先 join 一次比再多 round-trip 漂亮。
-        var panel = await (
-            from w in _db.Wafers.AsNoTracking()
-            join l in _db.Lots.AsNoTracking() on w.LotId equals l.Id
-            where w.PanelNo == panelNo
-            select new { Wafer = w, Lot = l })
-            .FirstOrDefaultAsync(cancellationToken);
+        // 為什麼直接 .FirstOrDefaultAsync(panels)：
+        // - panels 表已冗餘 lot_no，連 lots 都不必再 JOIN；
+        //   PanelInfoDto 直接用 entity 屬性即可。
+        var panel = await _db.Panels
+            .AsNoTracking()
+            .FirstOrDefaultAsync(p => p.PanelNo == panelNo, cancellationToken);
 
         if (panel is null)
         {
@@ -96,13 +97,10 @@ public sealed class TraceController : ControllerBase
         }
 
         var profile = _profileService.Current;
-        // 為什麼 station label 要從 profile 拿：
-        // - PCB / 半導體切換時，UI 會自動顯示對應的中文名稱（錫膏印刷 vs 蝕刻），
-        //   API 層幫忙 enrich 可以避免前端再 lookup 一次。
-        var stationLookup = profile.Stations.ToDictionary(s => s.Code, s => s);
+        var stationLookup = profile.Stations.ToDictionary(s => s.Code, s => s, StringComparer.OrdinalIgnoreCase);
 
         var stations = await _db.PanelStationLogs.AsNoTracking()
-            .Where(x => x.PanelId == panel.Wafer.Id)
+            .Where(x => x.PanelId == panel.Id)
             .OrderBy(x => x.EnteredAt)
             .ToListAsync(cancellationToken);
 
@@ -117,13 +115,18 @@ public sealed class TraceController : ControllerBase
                 s.ExitedAt,
                 s.Result,
                 s.Operator,
+                s.OperatorName,
+                s.ToolCode,
                 s.Note);
         }).ToList();
 
+        // 為什麼仍 JOIN material_lots：
+        // - 物料的 supplier / received_at 沒有冗餘到 panel_material_usage；
+        //   單筆查詢 JOIN 一次成本可接受，也比把整個 MaterialLot 反正規化進中介表乾淨。
         var usages = await (
             from u in _db.PanelMaterialUsages.AsNoTracking()
             join m in _db.MaterialLots.AsNoTracking() on u.MaterialLotId equals m.Id
-            where u.PanelId == panel.Wafer.Id
+            where u.PanelId == panel.Id
             orderby u.UsedAt
             select new { Usage = u, Material = m })
             .ToListAsync(cancellationToken);
@@ -136,35 +139,29 @@ public sealed class TraceController : ControllerBase
             x.Material.ReceivedAt,
             x.Usage.Quantity)).ToList();
 
-        // 為什麼「同 lot」直接撈所有 wafer：
-        // - 工程師最常想「這 lot 的其他板有沒有也 fail」，10 ~ 25 片可以全列。
-        var sameLotPanels = await (
-            from w in _db.Wafers.AsNoTracking()
-            where w.LotId == panel.Wafer.LotId && w.Id != panel.Wafer.Id && w.PanelNo != null
-            orderby w.CreatedAt
-            select new RelatedPanelDto(w.PanelNo!, panel.Lot.LotNo, w.Status, w.CreatedAt))
+        // 同 lot 板：直接 .Select Panel entity 即可。
+        var sameLotPanels = await _db.Panels
+            .AsNoTracking()
+            .Where(p => p.LotId == panel.LotId && p.Id != panel.Id)
+            .OrderBy(p => p.CreatedAt)
             .Take(50)
+            .Select(p => new RelatedPanelDto(p.PanelNo, p.LotNo, p.Status, p.CreatedAt))
             .ToListAsync(cancellationToken);
 
-        // 為什麼「同物料」要 distinct + 限制 50 筆：
-        // - 一批錫膏可能用在數百張板，全部撈會把前端撐爆；
-        //   先取最近 50 張 demo 用，正式上線可加分頁。
+        // 同物料板：透過 panel_material_usage 找對應 panel，因為 usage 已冗餘 panel_no/lot_no(間接) 我們仍要關 panels 表拿 status 與 createdAt。
         var materialIds = usages.Select(x => x.Material.Id).ToList();
         var sameMaterialPanels = await (
             from u in _db.PanelMaterialUsages.AsNoTracking()
-            join w in _db.Wafers.AsNoTracking() on u.PanelId equals w.Id
-            join l in _db.Lots.AsNoTracking() on w.LotId equals l.Id
-            where materialIds.Contains(u.MaterialLotId)
-                  && w.Id != panel.Wafer.Id
-                  && w.PanelNo != null
+            join p in _db.Panels.AsNoTracking() on u.PanelId equals p.Id
+            where materialIds.Contains(u.MaterialLotId) && p.Id != panel.Id
             orderby u.UsedAt descending
-            select new RelatedPanelDto(w.PanelNo!, l.LotNo, w.Status, w.CreatedAt))
+            select new RelatedPanelDto(p.PanelNo, p.LotNo, p.Status, p.CreatedAt))
             .Distinct()
             .Take(50)
             .ToListAsync(cancellationToken);
 
         var dto = new PanelTraceDto(
-            new PanelInfoDto(panel.Wafer.PanelNo!, panel.Lot.LotNo, panel.Wafer.Status, panel.Wafer.CreatedAt),
+            new PanelInfoDto(panel.PanelNo, panel.LotNo, panel.Status, panel.CreatedAt),
             stationDtos,
             materials,
             sameLotPanels,
@@ -176,24 +173,17 @@ public sealed class TraceController : ControllerBase
     /// <summary>
     /// 列出最近的板（給前端輸入框做 autocomplete / demo 用）。
     /// </summary>
-    /// <remarks>
-    /// 為什麼提供這支：
-    /// - demo / 面試時最尷尬的就是「不知道要輸入哪個 panelNo」；
-    ///   在 UI 顯示「最近 20 張板」可以讓觀眾立刻點一張看。
-    /// </remarks>
     [HttpGet("panels/recent")]
     public async Task<ActionResult<IReadOnlyList<RelatedPanelDto>>> RecentPanels(
         [FromQuery] int take = 20,
         CancellationToken cancellationToken = default)
     {
         take = Math.Clamp(take, 1, 100);
-        var items = await (
-            from w in _db.Wafers.AsNoTracking()
-            join l in _db.Lots.AsNoTracking() on w.LotId equals l.Id
-            where w.PanelNo != null
-            orderby w.CreatedAt descending
-            select new RelatedPanelDto(w.PanelNo!, l.LotNo, w.Status, w.CreatedAt))
+        var items = await _db.Panels
+            .AsNoTracking()
+            .OrderByDescending(p => p.CreatedAt)
             .Take(take)
+            .Select(p => new RelatedPanelDto(p.PanelNo, p.LotNo, p.Status, p.CreatedAt))
             .ToListAsync(cancellationToken);
         return Ok(items);
     }
