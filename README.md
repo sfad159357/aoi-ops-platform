@@ -126,6 +126,54 @@ curl -s "http://localhost:8080/api/trace/panels/recent?take=3"; echo
 
 ---
 
+## 五、測試操作（Unit / Integration）
+
+### Unit tests（不需要 Docker）
+
+> 為什麼不用 Docker：單元測試針對「純邏輯／純函式」與「InMemory DB」驗證，不需要 Kafka/RabbitMQ/SQL Server/InfluxDB 容器。
+
+後端（.NET xUnit）：
+
+```bash
+cd backend
+dotnet test
+```
+
+若只跑 SPC Nelson rules（八大規則）：
+
+```bash
+cd backend
+dotnet test tests/AOIOpsPlatform.Api.Tests/AOIOpsPlatform.Api.Tests.csproj --filter FullyQualifiedName~SpcRulesEngineTests
+```
+
+前端（TypeScript 型別檢查）：
+
+```bash
+cd frontend
+npx tsc -b
+```
+
+### Integration / E2E（需要 Docker Compose）
+
+> 什麼時候需要 Docker：你想驗證「資料流真的跑完整條」：ingestion → Kafka/RabbitMQ → backend workers → SQL Server/InfluxDB 落地 → SignalR 推播 → 前端渲染。
+
+啟動整套環境後做 smoke：
+
+```bash
+make up
+make smoke
+```
+
+你也可以用瀏覽器確認 SignalR（WebSocket）真的在推：
+
+- 前端：`http://localhost:5173`
+- Chrome DevTools → Network → WS 看到：
+  - `/hubs/spc`（SPC 即時點）
+  - `/hubs/alarm`（異常即時）
+  - `/hubs/workorder`（工單即時）
+
+---
+
 ### SQL Server（Azure SQL Edge / Apple Silicon ARM64）
 
 > **為什麼用 Azure SQL Edge**：官方 `mcr.microsoft.com/mssql/server` 只發 amd64 image，在 M1/M2 走 Rosetta 模擬常 OOM；`azure-sql-edge` 是 Microsoft 官方 ARM64 原生版，記憶體佔用低、T-SQL 約 95% 相容。
@@ -162,7 +210,7 @@ GO
 
 ---
 
-## 五、Repo 結構
+## 六、Repo 結構
 
 ```
 aoi-ops-platform/
@@ -188,7 +236,7 @@ aoi-ops-platform/
 
 ---
 
-## 六、其他文件
+## 七、其他文件
 
 - **新成員第一次啟動**：[docs/getting-started.md](docs/getting-started.md)
 - **Demo 腳本（6 分鐘走完整條 PCB 產線）**：[docs/demo-script.md](docs/demo-script.md)
