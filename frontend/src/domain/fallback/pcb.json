@@ -29,7 +29,7 @@
     { "code": "yield_rate",       "labelZh": "良率",        "unit": "%",  "usl": 1.0, "lsl": 0.92,"target": 0.97 }
   ],
   "menus": [
-    { "id": "spc",   "labelZh": "SPC 統計製程管制" },
+    { "id": "spc",   "labelZh": "品質監控" },
     { "id": "wo",    "labelZh": "工單管理" },
     { "id": "alarm", "labelZh": "異常記錄" },
     { "id": "trace", "labelZh": "物料追溯查詢" }

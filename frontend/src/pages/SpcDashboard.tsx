@@ -383,7 +383,12 @@ function LatestTraceBar({
     )
   }
   const lot = point.lotNo?.trim() || '—'
-  const wafer = point.waferNo != null && !Number.isNaN(point.waferNo) ? String(point.waferNo) : '—'
+  // 為什麼板號優先顯示 panelNo：
+  // - panelNo 是 ingestion 已組好的「完整板號字串」（例如 WO-xxx-003-1），
+  //   比純 waferNo 序號更能直接對上追溯與工單情境；
+  // - 若舊資料尚未帶 panelNo，才 fallback 到 waferNo，確保相容既有事件。
+  const panel = point.panelNo?.trim()
+    || (point.waferNo != null && !Number.isNaN(point.waferNo) ? String(point.waferNo) : '—')
   return (
     <div
       style={{
@@ -398,7 +403,7 @@ function LatestTraceBar({
       }}
     >
       <span style={{ color: '#6b7280', marginRight: 8 }}>最新觀測追溯</span>
-      產線 {point.lineCode} · 機台 {point.toolCode} · {lotLabel} {lot} · {panelLabel} {wafer}
+      產線 {point.lineCode} · 機台 {point.toolCode} · {lotLabel} {lot} · {panelLabel} {panel}
     </div>
   )
 }
