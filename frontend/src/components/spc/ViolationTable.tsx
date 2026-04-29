@@ -11,24 +11,17 @@
 // 2026-04-28 更新：
 // - 遵循「後端規則引擎為權威」：違規事件以後端 payload 的 `violations`（含 OutOfSpec ruleId=0、Nelson ruleId≥1）為準，
 //   並以後端輸出的 ucl/lcl 補強「超出管制線」的直覺判定。
-// - 說明欄位改寫邏輯：OutOfSpec (ruleId=0) 仍用 ucl/lcl（與 value 同刻度）重述，避免刻度不一致時出現難讀文字。
+// - 右側卡片移除「說明」欄位，保留關鍵欄位（規則、嚴重度、UCL/LCL）讓畫面更精簡。
 
 import React from 'react'
-import type { SpcPointPayload, SpcRuleViolation } from '../../realtime/useSpcStream'
+import type { SpcPointPayload } from '../../realtime/useSpcStream'
 
 type Props = {
   rows: SpcPointPayload[]
   parameterLabel: string
-  /**
-   * profile 規格上限（0~1 或 0~100 均可，僅用於說明欄位補充資訊）。
-   * 為什麼是可選：刻度與 value 可能不同（0~1 vs 0~100），不做數值計算只做顯示。
-   */
-  usl?: number | null
-  /** profile 規格下限 */
-  lsl?: number | null
 }
 
-export default function ViolationTable({ rows, parameterLabel, usl = null, lsl = null }: Props) {
+export default function ViolationTable({ rows, parameterLabel }: Props) {
   // 只顯示「後端判定的違規」：
   // - 主要依 violations（後端規則引擎輸出）
   // - 次要補強：value 超出後端 ucl/lcl（同刻度）
@@ -78,19 +71,18 @@ export default function ViolationTable({ rows, parameterLabel, usl = null, lsl =
             <th style={th}>UCL / LCL</th>
             <th style={th}>規則</th>
             <th style={th}>嚴重度</th>
-            <th style={th}>說明</th>
           </tr>
         </thead>
         <tbody>
           {displayRows.length === 0 && (
             <tr>
-              <td colSpan={10} style={{ color: '#6b7280', textAlign: 'center', padding: '24px 0' }}>
+              <td colSpan={9} style={{ color: '#6b7280', textAlign: 'center', padding: '24px 0' }}>
                 目前沒有違規事件。
               </td>
             </tr>
           )}
           {displayRows.map((r, i) => (
-            <ViolationRow key={`${r.timestamp}-${i}`} row={r} usl={usl} lsl={lsl} />
+            <ViolationRow key={`${r.timestamp}-${i}`} row={r} />
           ))}
         </tbody>
       </table>
@@ -113,68 +105,10 @@ function isBackendViolation(row: SpcPointPayload): boolean {
 }
 
 
-/**
- * 建立說明文字，讓「超出 USL 1」這種因刻度不一致產生的後端描述變成可讀文字。
- *
- * 規則：
- * 1. 優先顯示 Nelson Rule（ruleId ≥ 1）的說明（由後端產生，語義正確）。
- * 2. OutOfSpec（ruleId=0）→ 用 ucl/lcl（與 value 同刻度）重新描述，加上 USL/LSL 備註。
- *    - value > ucl → 超出管制上限
- *    - value < lcl → 低於管制下限
- *    - value 在管制線內但有 OutOfSpec → 規格能力不足（通常是刻度問題）
- */
-function buildDescription(
-  violations: SpcRuleViolation[],
-  row: SpcPointPayload,
-  usl: number | null | undefined,
-  lsl: number | null | undefined,
-): string {
-  // 為什麼優先顯示 ruleId ≥ 1：
-  // - Nelson rule 的語義最接近「SPC 規則」本身；OutOfSpec 更像規格/能力提醒。
-  const nelsonViol = violations.find((v) => v.ruleId >= 1)
-  if (nelsonViol) return nelsonViol.description
-
-  const { value, ucl, lcl } = row
-
-  if (value > ucl) {
-    const note = usl != null ? `　USL=${formatSpecInValueScale(value, usl)}` : ''
-    return `${value.toFixed(3)} 超出管制上限 UCL ${ucl.toFixed(3)}${note}`
-  }
-  if (value < lcl) {
-    const note = lsl != null ? `　LSL=${formatSpecInValueScale(value, lsl)}` : ''
-    return `${value.toFixed(3)} 低於管制下限 LCL ${lcl.toFixed(3)}${note}`
-  }
-
-  // 在管制線內但仍有 OutOfSpec：以「實際 USL/LSL（換算到 value 同刻度）」說清楚，不要丟泛用句。
-  const hasOos = violations.some((v) => v.ruleId === 0)
-  if (hasOos && (usl != null || lsl != null)) {
-    const uslText = usl != null ? `USL=${formatSpecInValueScale(value, usl)}` : ''
-    const lslText = lsl != null ? `LSL=${formatSpecInValueScale(value, lsl)}` : ''
-    const joined = [uslText, lslText].filter(Boolean).join('，')
-    return `規格超限（但未超出 UCL/LCL）→ ${joined}`
-  }
-  return `規格超限（但未超出 UCL/LCL）`
-}
-
-/**
- * 把 profile 的 USL/LSL 轉成與 value 同刻度後再顯示。
- * 為什麼需要：yield_rate 可能是 0~1 或 0~100，若直接顯示 USL=1 會讓使用者誤解。
- */
-function formatSpecInValueScale(value: number, spec: number): string {
-  const valueLooksPercent = value > 1.5
-  const specLooksRatio = spec <= 1.5
-  const scaled = valueLooksPercent && specLooksRatio ? spec * 100 : spec
-  return parseFloat(scaled.toFixed(3)).toString()
-}
-
 function ViolationRow({
   row,
-  usl,
-  lsl,
 }: {
   row: SpcPointPayload
-  usl: number | null | undefined
-  lsl: number | null | undefined
 }) {
   const violations = row.violations ?? []
 
@@ -229,9 +163,6 @@ function ViolationRow({
       </td>
       <td style={td}>{ruleDisplay}</td>
       <td style={{ ...td, color }}>{top.severity.toUpperCase()}</td>
-      <td style={{ ...td, maxWidth: 280, wordBreak: 'break-word' }}>
-        {buildDescription(violations, row, usl, lsl)}
-      </td>
     </tr>
   )
 }

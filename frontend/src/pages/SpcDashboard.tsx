@@ -160,6 +160,9 @@ export default function SpcDashboard() {
         // 退路：若今日尚無資料，顯示 null（KPI 卡呈現「—」）
         value: todayYieldRate,
         format: 'percent',
+        // 為什麼改成一句白話：
+        // - 使用者希望 KPI 卡第一眼就懂，不用先讀公式。
+        caption: '今天到目前為止，整體良率有沒有達標。',
       },
       {
         key: 'cpk',
@@ -167,6 +170,7 @@ export default function SpcDashboard() {
         // 用前端重算的 correctedCpk，避免後端刻度不一致導致顯示 −40 的假負值
         value: correctedCpk,
         format: 'decimal2',
+        caption: '看製程穩不穩定，數字越高代表越穩。',
       },
       {
         key: 'violation_today',
@@ -176,6 +180,7 @@ export default function SpcDashboard() {
         // 為什麼用「件」：與累積產出單位一致（每點 inspected_qty ≥1，違規點數 ≤ 累積件數），
         // 方便使用者直接比對兩張 KPI 卡，不會誤以為是不同量綱的數字。
         suffix: ' 件',
+        caption: '今天累計出現幾件超出規則的異常。',
       },
       {
         key: 'panels_per_hour',
@@ -183,6 +188,7 @@ export default function SpcDashboard() {
         value: qtyPerSec,
         format: 'decimal3',
         suffix: ' 件/秒',
+        caption: '目前每秒大約產出多少件。',
       },
       {
         key: 'cumulative_output',
@@ -190,6 +196,7 @@ export default function SpcDashboard() {
         value: windowStats == null ? null : cumulativeQty,
         format: 'int',
         suffix: ' 件',
+        caption: '從這次觀測開始到現在，總共累積幾件。',
       },
     ]
   }, [profile, cumulativeQty, panelsPerSecKpiConfig, qtyPerSec, violationTodayCount, windowStats])
@@ -270,8 +277,6 @@ export default function SpcDashboard() {
         <ViolationTable
           rows={violationEventRows}
           parameterLabel={parameter?.labelZh ?? filter.parameterCode}
-          usl={parameter?.usl}
-          lsl={parameter?.lsl}
         />
       </div>
 
