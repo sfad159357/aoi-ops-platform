@@ -80,6 +80,7 @@ public sealed class AlarmRabbitWorker : IRabbitMessageHandler
         // - alarms / defects 都需要 FK；先 ensure 一次後兩張表共用。
         var (lotId, lotNo) = await EnsureLotAsync(evt.LotNo, cancellationToken);
         var (panelId, panelNo) = await EnsurePanelAsync(lotId, lotNo, evt.PanelNo, evt.WaferNo, cancellationToken);
+        await PromotePanelStatusFromDefectAsync(panelId, evt.Severity, cancellationToken);
 
         // 為什麼 alarm 落地時把全套關聯欄位都寫進去：
         // - 列表 API 不再需要 JOIN；
@@ -248,6 +249,29 @@ public sealed class AlarmRabbitWorker : IRabbitMessageHandler
         _db.Panels.Add(panel);
         await _db.SaveChangesAsync(cancellationToken);
         return (panel.Id, panel.PanelNo);
+    }
+
+    /// <summary>
+    /// 依 defect 嚴重度動態升級 panel 狀態，避免固定停在 in_progress。
+    /// </summary>
+    /// <remarks>
+    /// 為什麼只做「升級」不做降級：
+    /// - defect 事件是異常事實，進到 fail 不應被後續低嚴重度事件覆蓋回 pass/in_progress；
+    /// - panel 回復 pass 應由站別流程（inspection/重工）重新驗證，不由 alarm stream 直接回寫。
+    /// </remarks>
+    private async Task PromotePanelStatusFromDefectAsync(Guid? panelId, string? severity, CancellationToken cancellationToken)
+    {
+        if (!panelId.HasValue) return;
+        var panel = await _db.Panels.FirstOrDefaultAsync(p => p.Id == panelId.Value, cancellationToken);
+        if (panel is null) return;
+
+        var level = (severity ?? string.Empty).Trim().ToLowerInvariant();
+        var shouldFail = level is "critical" or "high" or "medium";
+        if (!shouldFail) return;
+        if (string.Equals(panel.Status, "fail", StringComparison.OrdinalIgnoreCase)) return;
+
+        panel.Status = "fail";
+        await _db.SaveChangesAsync(cancellationToken);
     }
 
     private static string Truncate(string s) => s.Length <= 200 ? s : s[..200] + "…";

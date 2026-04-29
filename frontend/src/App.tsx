@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import './App.css'
 import SpcDashboard from './pages/SpcDashboard'
 import AlarmsPage from './pages/AlarmsPage'
@@ -27,13 +27,6 @@ type PageId = 'health' | 'spc' | 'alarm' | 'wo' | 'trace'
 function App() {
   const [page, setPage] = useState<PageId>('health')
   const { profile } = useProfile()
-  const apiBaseUrl = useMemo(() => {
-    // 為什麼從 env 讀：
-    // - 本機開發、Docker container、未來部署的後端網址可能不同，用環境變數切換最安全也最不容易搞混。
-    // - 你的 docker-compose 已經提供 VITE_API_BASE_URL=http://localhost:8080。
-    return (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:8080'
-  }, [])
-
   return (
     <>
       {/* 頂部導覽列 */}
@@ -57,13 +50,15 @@ function App() {
           // 為什麼把 SPC / Alarm / Workorder 的標籤從 profile 取：
           // - profile.menus 由 domain profile JSON 提供，
           //   切到 semiconductor profile 時，UI 文案會自動跟著換。
-          { id: 'alarm',  label: profile.menus.find((m) => m.id === 'alarm')?.labelZh ?? '異常記錄' },
           { id: 'wo',     label: profile.menus.find((m) => m.id === 'wo')?.labelZh ?? '工單管理' },
           { id: 'trace',  label: profile.menus.find((m) => m.id === 'trace')?.labelZh ?? '物料追溯查詢' },
-          // 為什麼固定改名為「品質監控」：
-          // - 使用者需求是讓 SPC 頁更貼近現場語彙（看到品質狀態），
-          //   但內部 id 仍保留 spc，避免影響既有程式邏輯。
-          { id: 'spc', label: '品質監控' },
+          // 為什麼 SPC 也改成讀 profile：
+          // - 使用者要求避免前端硬寫標籤；切換不同 domain profile 時，
+          //   選單文字應由後端設定（profile JSON）決定，前端只負責渲染。
+          { id: 'spc', label: profile.menus.find((m) => m.id === 'spc')?.labelZh ?? '品質監控' },
+          // 為什麼把異常記錄移到最後：
+          // - 使用者操作流程改為先看首頁/工單/追溯/品質，再看異常事件列表。
+          { id: 'alarm',  label: profile.menus.find((m) => m.id === 'alarm')?.labelZh ?? '異常記錄' },
         ] as { id: PageId; label: string }[]).map((nav) => (
           <button
             key={nav.id}
@@ -138,7 +133,7 @@ function App() {
                 這個首頁用來做<strong>真實落地驗收</strong>：直接打後端 <code>/api/health/db</code> 與各 API，確保資料流暢、欄位關聯完整（非 mock）。
               </p>
               <p style={{ margin: '8px 0 0', color: '#94a3b8', lineHeight: 1.6 }}>
-                API Base URL（可用 <code>VITE_API_BASE_URL</code> 調整）：<code>{apiBaseUrl}</code>
+                API Base URL（可用 <code>VITE_API_BASE_URL</code> 調整）
               </p> */}
             </div>
           </div>

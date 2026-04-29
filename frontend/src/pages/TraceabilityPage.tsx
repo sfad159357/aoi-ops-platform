@@ -1,7 +1,7 @@
 // TraceabilityPage：物料追溯頁。
 //
 // 為什麼這頁要做：
-// - 對齊 HTML Tab 2 的「板資訊 + 6 站時間軸 + 物料批號 + 同批次列表」；
+// - 對齊 HTML Tab 2 的「板資訊 + 站別時間軸 + 物料批號 + 同批次列表」；
 //   工程師最常追溯：「這張板出問題 → 哪一站異常 → 用了哪批物料 → 同批還有哪些板」。
 //
 // 為什麼整頁打一支 API：
@@ -15,8 +15,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useProfile } from '../domain/useProfile'
 import {
+  fetchMaterialTracking,
   fetchPanelTrace,
   fetchRecentPanels,
+  type MaterialTrackingItem,
   type PanelTrace,
   type RelatedPanel,
   type StationLog,
@@ -27,8 +29,13 @@ export default function TraceabilityPage() {
 
   const [panelNoInput, setPanelNoInput] = useState<string>('')
   const [recent, setRecent] = useState<RelatedPanel[]>([])
+  const [dateFilter, setDateFilter] = useState<string>(() => todayYmd())
+  const [materialTake, setMaterialTake] = useState<number>(20)
   const [recentQuery, setRecentQuery] = useState<string>('')
   const [trace, setTrace] = useState<PanelTrace | null>(null)
+  const [materialRows, setMaterialRows] = useState<MaterialTrackingItem[]>([])
+  const [materialLoading, setMaterialLoading] = useState(false)
+  const [materialError, setMaterialError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -55,18 +62,28 @@ export default function TraceabilityPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // 為什麼先做日期再做模糊搜尋：
+  // - 物料追溯頁與工單管理頁都以「先看某一天，再縮小關鍵字」為主要操作節奏；
+  // - 先過濾日期可降低候選數量，避免最近板很多時下拉選單難以定位。
+  //
+  // 解決什麼問題：
+  // - 讓「物料追溯查詢」具備與「工單管理」一致的日期篩選體驗。
+  // - 使用者可直接切換某天資料，不會被跨日歷史板號干擾。
   // 為什麼要做模糊搜尋：
   // - 追溯時常見情境是「拿到一串板號/批號碎片」就想快速定位；
   // - 不強制精準匹配，能讓工程師用 key-in 立刻縮小候選清單。
   const filteredRecent = useMemo(() => {
+    const byDate = dateFilter
+      ? recent.filter((r) => toYmd(r.createdAt) === dateFilter)
+      : recent
     const q = recentQuery.trim().toLowerCase()
-    if (!q) return recent
-    return recent.filter((r) => {
+    if (!q) return byDate
+    return byDate.filter((r) => {
       const a = r.panelNo.toLowerCase()
       const b = (r.lotNo ?? '').toLowerCase()
       return a.includes(q) || b.includes(q)
     })
-  }, [recent, recentQuery])
+  }, [dateFilter, recent, recentQuery])
 
   // 為什麼物料預設最新在上：
   // - 真實追溯通常先看「最近一筆用料/到貨」來判斷是否是同一批異常擴散；
@@ -107,20 +124,45 @@ export default function TraceabilityPage() {
     return () => ctrl.abort()
   }, [panelNoInput])
 
-  // 為什麼 timeline 以 profile.stations 為主：
-  // - 後端可能還沒寫齊 6 站事件，但 UI 應該總是顯示完整 6 個格子（缺資料的灰底）；
-  //   先列 profile.stations 全表，再把後端事件 map 上去。
+  // 為什麼依日期直接打 material-tracking API：
+  // - 「物料追蹤查詢」要呈現 DB 真實交易資料，不能只靠 recent panel 在前端過濾；
+  // - 每次切日期就重查，可讓畫面與 DBeaver 查詢結果一一對齊。
+  useEffect(() => {
+    if (!dateFilter) {
+      setMaterialRows([])
+      return
+    }
+    const ctrl = new AbortController()
+    setMaterialLoading(true)
+    setMaterialError(null)
+    void (async () => {
+      try {
+        const rows = await fetchMaterialTracking(dateFilter, materialTake, ctrl.signal)
+        setMaterialRows(rows)
+      } catch (e) {
+        if (e instanceof DOMException && e.name === 'AbortError') return
+        setMaterialError(e instanceof Error ? e.message : String(e))
+        setMaterialRows([])
+      } finally {
+        setMaterialLoading(false)
+      }
+    })()
+    return () => ctrl.abort()
+  }, [dateFilter, materialTake])
+
+  // 為什麼 timeline 改成完全吃後端 trace.stations：
+  // - 使用者要求不要前端硬寫站數（例如固定 6 站），改由後端回傳決定顯示內容；
+  // - TraceController 已回傳 stationLabel/seq，前端只做排序渲染，避免雙邊規格漂移。
+  //
+  // 解決什麼問題：
+  // - 當後端站別配置調整（增站/減站/改序）時，前端不必改碼即可正確呈現。
   const timeline = useMemo(() => {
-    const stationsByCode = new Map(
-      (trace?.stations ?? []).map((s) => [s.stationCode, s])
-    )
-    return profile.stations.map((s) => ({
-      code: s.code,
-      label: s.labelZh,
-      seq: s.seq,
-      log: stationsByCode.get(s.code) ?? null,
-    }))
-  }, [profile.stations, trace?.stations])
+    const rows = trace?.stations ?? []
+    return [...rows].sort((a, b) => {
+      if (a.seq !== b.seq) return a.seq - b.seq
+      return a.enteredAt.localeCompare(b.enteredAt)
+    })
+  }, [trace?.stations])
 
   return (
     <div style={pageStyle}>
@@ -130,13 +172,35 @@ export default function TraceabilityPage() {
             {profile.menus.find((m) => m.id === 'trace')?.labelZh ?? '物料追溯查詢'}
           </h1>
           <div style={{ color: '#6b7280', fontSize: 12, marginTop: 4 }}>
-            掃 QR Code 或選最近{profile.entities.panel.labelZh}：6 站時間軸 + 物料批號 + 同批次{profile.entities.panel.labelZh}
+            掃 QR Code 或選最近{profile.entities.panel.labelZh}：站別時間軸 + 物料批號 + 同批次{profile.entities.panel.labelZh}
           </div>
         </div>
       </div>
 
       {/* 查詢列 */}
       <div style={searchRowStyle}>
+        <label style={{ fontSize: 12, color: '#9ca3af' }}>日期</label>
+        <input
+          type="date"
+          value={dateFilter}
+          onChange={(e) => setDateFilter(e.target.value)}
+          style={dateInputStyle}
+        />
+        <label style={{ fontSize: 12, color: '#9ca3af' }}>物料筆數</label>
+        <select
+          value={String(materialTake)}
+          onChange={(e) => setMaterialTake(Number(e.target.value))}
+          style={selectStyle}
+        >
+          {/* 為什麼預設 20 筆：
+              - 追溯頁操作節奏是先快速檢視，避免一次回太多列影響首屏速度；
+              - 仍保留更多筆數選項給進階追查。 */}
+          <option value="20">預設 20 筆</option>
+          <option value="50">50 筆</option>
+          <option value="100">100 筆</option>
+          <option value="500">500 筆</option>
+          <option value="1000">1000 筆</option>
+        </select>
         <label style={{ fontSize: 12, color: '#9ca3af' }}>
           {profile.entities.panel.labelZh} No
         </label>
@@ -158,7 +222,7 @@ export default function TraceabilityPage() {
             onChange={(e) => setPanelNoInput(e.target.value)}
             style={selectStyle}
           >
-            <option value="">— 最近 {recent.length} 張 —</option>
+            <option value="">— {dateFilter || '全部日期'} 共 {filteredRecent.length} 張 —</option>
             {filteredRecent.map((r) => (
               <option key={r.panelNo} value={r.panelNo}>
                 {r.panelNo}（lot={r.lotNo}）
@@ -170,6 +234,53 @@ export default function TraceabilityPage() {
 
       {loading && <div style={{ color: '#9ca3af', fontSize: 12 }}>載入中…</div>}
       {error && <div style={errorStyle}>查無資料或查詢失敗：{error}</div>}
+
+      {/* 物料追蹤查詢（真資料） */}
+      <section style={sectionStyle}>
+        <h2 style={sectionTitleStyle}>物料追蹤查詢（{dateFilter || '未指定日期'}）</h2>
+        {materialLoading && <div style={{ color: '#9ca3af', fontSize: 12 }}>載入中…</div>}
+        {materialError && <div style={errorStyle}>物料追蹤查詢失敗：{materialError}</div>}
+        {!materialLoading && !materialError && (
+          <div style={{ fontSize: 12, color: '#9ca3af', marginBottom: 8 }}>
+            當日真實筆數：{materialRows.length}
+          </div>
+        )}
+        {!materialLoading && !materialError && materialRows.length === 0 ? (
+          <div style={emptyStyle}>此日期沒有物料使用資料。</div>
+        ) : (
+          !materialLoading &&
+          !materialError && (
+            <table style={tableStyle}>
+              <thead>
+                <tr style={{ background: '#161b22', color: '#9ca3af' }}>
+                  <th style={thStyle}>使用時間</th>
+                  <th style={thStyle}>板號</th>
+                  <th style={thStyle}>批次</th>
+                  <th style={thStyle}>物料批號</th>
+                  <th style={thStyle}>物料類型</th>
+                  <th style={thStyle}>名稱</th>
+                  <th style={thStyle}>供應商</th>
+                  <th style={thStyle}>用量</th>
+                </tr>
+              </thead>
+              <tbody>
+                {materialRows.map((r, idx) => (
+                  <tr key={`${r.panelNo}-${r.materialLotNo}-${r.usedAt}-${idx}`} style={{ borderBottom: '1px solid #21262d' }}>
+                    <td style={tdMonoStyle}>{formatTime(r.usedAt)}</td>
+                    <td style={tdMonoStyle}>{r.panelNo}</td>
+                    <td style={tdMonoStyle}>{r.lotNo}</td>
+                    <td style={tdMonoStyle}>{r.materialLotNo}</td>
+                    <td style={tdMonoStyle}>{r.materialType}</td>
+                    <td style={tdStyle}>{r.materialName ?? '-'}</td>
+                    <td style={tdStyle}>{r.supplier ?? '-'}</td>
+                    <td style={tdMonoStyle}>{r.quantity ?? '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )
+        )}
+      </section>
 
       {trace && (
         <>
@@ -184,12 +295,12 @@ export default function TraceabilityPage() {
             </div>
           </section>
 
-          {/* 6 站時間軸 */}
+          {/* 站別時間軸 */}
           <section style={sectionStyle}>
-            <h2 style={sectionTitleStyle}>站別時間軸（{profile.stations.length} 站）</h2>
+            <h2 style={sectionTitleStyle}>站別時間軸（{timeline.length} 站）</h2>
             <div style={timelineGridStyle}>
               {timeline.map((t, i) => (
-                <StationCard key={t.code} step={i + 1} code={t.code} label={t.label} log={t.log} />
+                <StationCard key={`${t.stationCode}-${t.enteredAt}-${i}`} step={i + 1} code={t.stationCode} label={t.stationLabel} log={t} />
               ))}
             </div>
           </section>
@@ -234,7 +345,7 @@ export default function TraceabilityPage() {
               <RelatedTable rows={trace.sameLotPanels} onSelect={setPanelNoInput} />
             </section>
             <section style={sectionStyle}>
-              <h2 style={sectionTitleStyle}>同物料 {profile.entities.panel.labelZh}（{trace.sameMaterialPanels.length} 張，最多 50 筆）</h2>
+              <h2 style={sectionTitleStyle}>同物料 {profile.entities.panel.labelZh}（{trace.sameMaterialPanels.length} 張）</h2>
               <RelatedTable rows={trace.sameMaterialPanels} onSelect={setPanelNoInput} />
             </section>
           </div>
@@ -400,6 +511,19 @@ function formatTime(iso: string): string {
   }
 }
 
+function toYmd(iso: string): string {
+  try {
+    const d = new Date(iso)
+    return d.toLocaleDateString('sv-SE')
+  } catch {
+    return ''
+  }
+}
+
+function todayYmd(): string {
+  return new Date().toLocaleDateString('sv-SE')
+}
+
 const pageStyle: React.CSSProperties = {
   background: '#0d1117',
   color: '#e5e7eb',
@@ -452,6 +576,16 @@ const searchInputStyle: React.CSSProperties = {
   fontFamily: 'JetBrains Mono, monospace',
   fontSize: 13,
   width: 220,
+}
+
+const dateInputStyle: React.CSSProperties = {
+  background: '#161b22',
+  color: '#e5e7eb',
+  border: '1px solid #21262d',
+  padding: '6px 8px',
+  borderRadius: 6,
+  fontFamily: 'JetBrains Mono, monospace',
+  fontSize: 12,
 }
 
 const sectionStyle: React.CSSProperties = {

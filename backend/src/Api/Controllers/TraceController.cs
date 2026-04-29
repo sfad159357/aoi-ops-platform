@@ -73,6 +73,16 @@ public sealed class TraceController : ControllerBase
         IReadOnlyList<RelatedPanelDto> SameLotPanels,
         IReadOnlyList<RelatedPanelDto> SameMaterialPanels);
 
+    public sealed record MaterialTrackingItemDto(
+        string PanelNo,
+        string LotNo,
+        string MaterialLotNo,
+        string MaterialType,
+        string? MaterialName,
+        string? Supplier,
+        decimal? Quantity,
+        DateTimeOffset UsedAt);
+
     /// <summary>
     /// 取得指定板的完整追溯資訊。
     /// </summary>
@@ -186,5 +196,148 @@ public sealed class TraceController : ControllerBase
             .Select(p => new RelatedPanelDto(p.PanelNo, p.LotNo, p.Status, p.CreatedAt))
             .ToListAsync(cancellationToken);
         return Ok(items);
+    }
+
+    /// <summary>
+    /// 依日期查詢「物料追蹤」真實資料（panel_material_usage + material_lots + panels）。
+    /// </summary>
+    /// <remarks>
+    /// 為什麼要做這支查詢：
+    /// - 前端「物料追溯查詢」需要的是某天所有用料明細，不是 recent panel 的前端二次過濾；
+    /// - 直接在 DB 依 used_at 篩選才能保證畫面顯示的是當天真實資料。
+    ///
+    /// 解決什麼問題：
+    /// - 避免使用者誤以為是 mock/即時生成資料；
+    /// - DBeaver SQL 與前端畫面都對同一張交易表（panel_material_usage）校對。
+    /// </remarks>
+    [HttpGet("material-tracking")]
+    public async Task<ActionResult<IReadOnlyList<MaterialTrackingItemDto>>> MaterialTracking(
+        [FromQuery] DateOnly? date = null,
+        [FromQuery] int take = 500,
+        CancellationToken cancellationToken = default)
+    {
+        take = Math.Clamp(take, 1, 2000);
+        var target = date ?? DateOnly.FromDateTime(DateTime.UtcNow);
+        // 為什麼用 DateTimeOffset 邊界：
+        // - panel_material_usage.used_at 欄位型別是 DateTimeOffset；
+        //   直接用 offset-aware 區間比較，避免 provider 對 DateTime kind 轉換歧義。
+        var start = new DateTimeOffset(target.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+        var end = new DateTimeOffset(target.AddDays(1).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+
+        var items = await (
+            from u in _db.PanelMaterialUsages.AsNoTracking()
+            join m in _db.MaterialLots.AsNoTracking() on u.MaterialLotId equals m.Id
+            join p in _db.Panels.AsNoTracking() on u.PanelId equals p.Id
+            where u.UsedAt >= start && u.UsedAt < end
+            orderby u.UsedAt descending
+            select new MaterialTrackingItemDto(
+                u.PanelNo,
+                p.LotNo,
+                u.MaterialLotNo,
+                m.MaterialType,
+                m.MaterialName,
+                m.Supplier,
+                u.Quantity,
+                u.UsedAt))
+            .Take(take)
+            .ToListAsync(cancellationToken);
+
+        return Ok(items);
+    }
+
+    /// <summary>
+    /// 一次性回填：依 panel_station_log 最新站別結果重算所有 panel 狀態。
+    /// </summary>
+    /// <remarks>
+    /// 為什麼要提供這支：
+    /// - 狀態動態規則上線前，歷史資料可能停在 in_progress；
+    /// - 需要一次批次回填，讓舊資料與新規則對齊，避免前端看到「全站 pass 但狀態仍 in_progress」。
+    /// </remarks>
+    [HttpPost("panels/backfill-status")]
+    public async Task<ActionResult<object>> BackfillPanelStatus(CancellationToken cancellationToken)
+    {
+        // 為什麼以 stations 主檔當「完整過站」標準：
+        // - 站別定義在主檔，避免前端或 worker 各自硬編碼站數；
+        // - 當站別配置調整時，回填規則自動跟著主檔變化。
+        var requiredStations = await _db.Stations
+            .AsNoTracking()
+            .OrderBy(s => s.Seq)
+            .Select(s => s.StationCode)
+            .ToListAsync(cancellationToken);
+
+        var panels = await _db.Panels.ToListAsync(cancellationToken);
+        if (panels.Count == 0)
+        {
+            return Ok(new
+            {
+                totalPanels = 0,
+                updatedPanels = 0,
+                requiredStationCount = requiredStations.Count,
+            });
+        }
+
+        var panelIds = panels.Select(p => p.Id).ToList();
+        var logs = await _db.PanelStationLogs
+            .AsNoTracking()
+            .Where(l => panelIds.Contains(l.PanelId))
+            .OrderByDescending(l => l.EnteredAt)
+            .ToListAsync(cancellationToken);
+
+        var logsByPanel = logs.GroupBy(l => l.PanelId).ToDictionary(g => g.Key, g => g.ToList());
+        var updated = 0;
+
+        foreach (var panel in panels)
+        {
+            logsByPanel.TryGetValue(panel.Id, out var panelLogs);
+            panelLogs ??= new List<Domain.Entities.PanelStationLog>();
+
+            var latestByStation = new Dictionary<string, Domain.Entities.PanelStationLog>(StringComparer.OrdinalIgnoreCase);
+            foreach (var log in panelLogs)
+            {
+                if (!latestByStation.ContainsKey(log.StationCode))
+                {
+                    latestByStation[log.StationCode] = log;
+                }
+            }
+
+            var nextStatus = "in_progress";
+            var hasFail = latestByStation.Values.Any(l =>
+                string.Equals(l.Result, "fail", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(l.Result, "scrap", StringComparison.OrdinalIgnoreCase));
+            if (hasFail)
+            {
+                nextStatus = "fail";
+            }
+            else if (requiredStations.Count > 0)
+            {
+                var allPassed = requiredStations.All(stationCode =>
+                {
+                    if (!latestByStation.TryGetValue(stationCode, out var row)) return false;
+                    return row.ExitedAt.HasValue && string.Equals(row.Result, "pass", StringComparison.OrdinalIgnoreCase);
+                });
+                if (allPassed)
+                {
+                    nextStatus = "pass";
+                }
+            }
+
+            if (!string.Equals(panel.Status, nextStatus, StringComparison.OrdinalIgnoreCase))
+            {
+                panel.Status = nextStatus;
+                updated++;
+            }
+        }
+
+        if (updated > 0)
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+
+        return Ok(new
+        {
+            totalPanels = panels.Count,
+            updatedPanels = updated,
+            requiredStationCount = requiredStations.Count,
+        });
     }
 }

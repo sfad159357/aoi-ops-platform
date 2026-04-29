@@ -65,6 +65,10 @@ export default function AlarmsPage() {
   const [bootstrap, setBootstrap] = useState<AlarmEvent[] | undefined>(undefined)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [dateFilter, setDateFilter] = useState<string>(() => todayYmd())
+  const [levelFilters, setLevelFilters] = useState<string[]>([])
+  const [lineFilters, setLineFilters] = useState<string[]>([])
+  const [stationFilters, setStationFilters] = useState<string[]>([])
+  const [toolFilters, setToolFilters] = useState<string[]>([])
   const baseUrl = useMemo(
     () => (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:8080',
     []
@@ -91,13 +95,62 @@ export default function AlarmsPage() {
 
   const { alarms, connectionState } = useAlarmStream({ bootstrap, maxItems: 200 })
 
-  // 為什麼要做「日期篩選，預設今天」：
-  // - 品質/製程工程師日常最常看的是「今天有哪些異常」，不需要一進來就被歷史資料淹沒；
-  // - 但仍保留切換日期，方便回頭追溯昨天/上週的狀況。
-  const filteredAlarms = useMemo(() => {
+  // 為什麼把「日期」先切成獨立結果：
+  // - 使用者要求多欄位篩選要和日期一起關聯，先得到日期集合後，
+  //   後面的等級/產線/站別/機台選項與結果都會跟著同一天資料變動。
+  const dateScopedAlarms = useMemo(() => {
     if (!dateFilter) return alarms
     return alarms.filter((a) => toYmd(a.triggeredAt) === dateFilter)
   }, [alarms, dateFilter])
+
+  // 為什麼選項要從 dateScopedAlarms 推導：
+  // - 讓多選下拉只顯示「該日期真實存在」的值，避免選到該日不存在的條件造成誤解。
+  const levelOptions = useMemo(
+    () => uniqueValues(dateScopedAlarms, (a) => normalizeFilterValue(a.alarmLevel)),
+    [dateScopedAlarms]
+  )
+  const lineOptions = useMemo(
+    () => uniqueValues(dateScopedAlarms, (a) => normalizeFilterValue(a.lineCode)),
+    [dateScopedAlarms]
+  )
+  const stationOptions = useMemo(
+    () => uniqueValues(dateScopedAlarms, (a) => normalizeFilterValue(a.stationCode)),
+    [dateScopedAlarms]
+  )
+  const toolOptions = useMemo(
+    () => uniqueValues(dateScopedAlarms, (a) => normalizeFilterValue(a.toolCode)),
+    [dateScopedAlarms]
+  )
+
+  // 為什麼日期變更後要清理已選條件：
+  // - 避免保留「新日期不存在」的舊選項，造成畫面看起來像被無效條件卡住。
+  useEffect(() => {
+    setLevelFilters((prev) => prev.filter((v) => levelOptions.includes(v)))
+    setLineFilters((prev) => prev.filter((v) => lineOptions.includes(v)))
+    setStationFilters((prev) => prev.filter((v) => stationOptions.includes(v)))
+    setToolFilters((prev) => prev.filter((v) => toolOptions.includes(v)))
+  }, [levelOptions, lineOptions, stationOptions, toolOptions])
+
+  // 為什麼多欄位篩選採用 AND 關係：
+  // - 一次定位特定異常場景（例如某日 + 某線 + 某站 + 某機台）時，AND 才符合現場追查習慣。
+  const filteredAlarms = useMemo(() => {
+    const levelSet = new Set(levelFilters)
+    const lineSet = new Set(lineFilters)
+    const stationSet = new Set(stationFilters)
+    const toolSet = new Set(toolFilters)
+    return dateScopedAlarms.filter((a) => {
+      const level = normalizeFilterValue(a.alarmLevel)
+      const line = normalizeFilterValue(a.lineCode)
+      const station = normalizeFilterValue(a.stationCode)
+      const tool = normalizeFilterValue(a.toolCode)
+      return (
+        (levelSet.size === 0 || levelSet.has(level)) &&
+        (lineSet.size === 0 || lineSet.has(line)) &&
+        (stationSet.size === 0 || stationSet.has(station)) &&
+        (toolSet.size === 0 || toolSet.has(tool))
+      )
+    })
+  }, [dateScopedAlarms, levelFilters, lineFilters, stationFilters, toolFilters])
 
   // 為什麼做日期分組：
   // - 同一天內仍可能有上百筆事件；用日期段落可快速定位「哪一天爆量」。
@@ -146,8 +199,51 @@ export default function AlarmsPage() {
             onChange={(e) => setDateFilter(e.target.value)}
             style={dateInputStyle}
           />
+          {/* 為什麼提供清除全部篩選：
+              - 多選條件變多後，使用者常需要快速回到預設視角重新查詢；
+              - 一鍵重置可降低逐一取消選項的操作成本。 */}
+          <button
+            type="button"
+            onClick={() => {
+              setDateFilter(todayYmd())
+              setLevelFilters([])
+              setLineFilters([])
+              setStationFilters([])
+              setToolFilters([])
+            }}
+            style={resetButtonStyle}
+          >
+            清除全部篩選
+          </button>
           <div style={{ color: '#9ca3af', fontSize: 12 }}>共 {filteredAlarms.length} 筆</div>
         </div>
+      </div>
+
+      <div style={filterRowStyle}>
+        <FilterMultiSelect
+          label="等級"
+          options={levelOptions}
+          selected={levelFilters}
+          onChange={setLevelFilters}
+        />
+        <FilterMultiSelect
+          label="產線"
+          options={lineOptions}
+          selected={lineFilters}
+          onChange={setLineFilters}
+        />
+        <FilterMultiSelect
+          label="站別"
+          options={stationOptions}
+          selected={stationFilters}
+          onChange={setStationFilters}
+        />
+        <FilterMultiSelect
+          label="機台"
+          options={toolOptions}
+          selected={toolFilters}
+          onChange={setToolFilters}
+        />
       </div>
 
       {loadError && (
@@ -163,7 +259,13 @@ export default function AlarmsPage() {
               <th style={thStyle}>產線</th>
               <th style={thStyle}>站別</th>
               <th style={thStyle}>機台</th>
-              <th style={thStyle}>批次</th>
+              {/* 為什麼 lot/panel 欄位標題改讀 profile：
+                  - 不同產業 profile 對 lot/panel 名稱可能不同；
+                  - 前端不硬寫名詞，改由後端設定統一詞彙。 */}
+              <th style={thStyle}>{profile.entities.lot.labelZh}</th>
+              {/* 為什麼此處固定顯示「板號」：
+                  - 現場使用者回饋「板」語意太短，容易和其他名詞混淆；
+                  - 固定為「板號」可直接對齊 panel_no 欄位語意，降低判讀成本。 */}
               <th style={thStyle}>板號</th>
               <th style={thStyle}>作業員</th>
               <th style={thStyle}>告警碼</th>
@@ -320,6 +422,68 @@ function labelForState(state: HubConnectionState | 'idle'): string {
   }
 }
 
+/**
+ * 異常記錄多選篩選器。
+ *
+ * 為什麼使用原生 multiple select：
+ * - 不引入額外 UI 套件就能支援多選，維持目前 MVP 的低依賴；
+ * - 以 Ctrl/Cmd 多選符合內部 demo 場景，實作成本最小且可立即交付。
+ *
+ * 解決什麼問題：
+ * - 讓使用者可同時鎖定多個等級/產線/站別/機台，快速縮小異常範圍。
+ */
+function FilterMultiSelect({
+  label,
+  options,
+  selected,
+  onChange,
+}: {
+  label: string
+  options: string[]
+  selected: string[]
+  onChange: (values: string[]) => void
+}) {
+  // 為什麼要提供 All 預設值：
+  // - 使用者可明確看見目前是「全部」狀態，而不是靠空陣列隱含語意；
+  // - 可降低多選條件清空後，不知道是否已回到全量資料的疑慮。
+  const value = selected.length === 0 ? [ALL_FILTER_OPTION] : selected
+  return (
+    <label style={filterBlockStyle}>
+      <span style={{ color: '#9ca3af', fontSize: 12 }}>{label}</span>
+      <select
+        multiple
+        value={value}
+        onChange={(e) => {
+          const next = Array.from(e.currentTarget.selectedOptions, (o) => o.value)
+          if (next.length === 0 || next.includes(ALL_FILTER_OPTION)) {
+            onChange([])
+            return
+          }
+          onChange(next.filter((v) => v !== ALL_FILTER_OPTION))
+        }}
+        style={multiSelectStyle}
+      >
+        <option value={ALL_FILTER_OPTION}>{ALL_FILTER_OPTION}</option>
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+}
+
+function normalizeFilterValue(value: string | null | undefined): string {
+  return (value ?? '-').trim() || '-'
+}
+
+function uniqueValues<T>(rows: T[], pick: (row: T) => string): string[] {
+  return Array.from(new Set(rows.map(pick))).sort((a, b) => a.localeCompare(b, 'zh-Hant'))
+}
+
+const ALL_FILTER_OPTION = 'All'
+
 const pageStyle: React.CSSProperties = {
   background: '#0d1117',
   color: '#e5e7eb',
@@ -390,6 +554,40 @@ const dateInputStyle: React.CSSProperties = {
   borderRadius: 6,
   fontFamily: 'JetBrains Mono, monospace',
   fontSize: 12,
+}
+
+const filterRowStyle: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+  gap: 10,
+  marginBottom: 12,
+}
+
+const filterBlockStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 6,
+}
+
+const multiSelectStyle: React.CSSProperties = {
+  background: '#161b22',
+  color: '#e5e7eb',
+  border: '1px solid #21262d',
+  borderRadius: 6,
+  fontFamily: 'JetBrains Mono, monospace',
+  fontSize: 12,
+  minHeight: 84,
+  padding: 6,
+}
+
+const resetButtonStyle: React.CSSProperties = {
+  background: '#1f2937',
+  color: '#e5e7eb',
+  border: '1px solid #374151',
+  borderRadius: 6,
+  padding: '6px 10px',
+  fontSize: 12,
+  cursor: 'pointer',
 }
 
 const groupHeaderStyle: React.CSSProperties = {

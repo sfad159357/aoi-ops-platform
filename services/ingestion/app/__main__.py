@@ -619,6 +619,65 @@ def _upsert_panel_station_log(cur, ev: InspectionEvent, panel_id: str, *, provid
     )
 
 
+def _refresh_panel_status(cur, panel_id: str) -> None:
+    """
+    依 panel_station_log 最新站別結果動態回寫 panels.status。
+
+    為什麼要做：
+    - 不能把 panel 狀態固定停在 in_progress；狀態應該由實際過站結果推導。
+    - Traceability 頁顯示的站別時間軸與 panel 狀態必須同一套事實來源，避免「全 pass 但狀態仍 in_progress」。
+
+    解決什麼問題：
+    - 每次站別寫入後，都會即時重算該板目前狀態，前後端顯示一致。
+    """
+    cur.execute(
+        """
+        SELECT station_code, exited_at, result
+        FROM panel_station_log
+        WHERE panel_id = %s
+        ORDER BY entered_at DESC
+        """,
+        (panel_id,),
+    )
+    rows = cur.fetchall()
+    latest_by_station: dict[str, tuple[object | None, str | None]] = {}
+    for station_code, exited_at, result in rows:
+        code = str(station_code)
+        if code in latest_by_station:
+            continue
+        latest_by_station[code] = (exited_at, (str(result).lower() if result is not None else None))
+
+    cur.execute("SELECT station_code FROM stations")
+    required_station_codes = [str(r[0]) for r in cur.fetchall() if r and r[0] is not None]
+
+    next_status = "in_progress"
+    has_fail = any((res in ("fail", "scrap")) for (_exited_at, res) in latest_by_station.values())
+    if has_fail:
+        next_status = "fail"
+    elif required_station_codes:
+        all_required_passed = True
+        for station_code in required_station_codes:
+            station_row = latest_by_station.get(station_code)
+            if station_row is None:
+                all_required_passed = False
+                break
+            exited_at, result = station_row
+            if exited_at is None or result != "pass":
+                all_required_passed = False
+                break
+        if all_required_passed:
+            next_status = "pass"
+
+    cur.execute(
+        """
+        UPDATE panels
+        SET status = %s
+        WHERE id = %s
+        """,
+        (next_status, panel_id),
+    )
+
+
 def _insert_process_run(cur, ev: InspectionEvent, *, provider: str) -> None:
     """
     把一筆 inspection 事件寫入 process_runs，並同步更新 panel_station_log。
@@ -673,6 +732,9 @@ def _insert_process_run(cur, ev: InspectionEvent, *, provider: str) -> None:
     )
 
     _upsert_panel_station_log(cur, ev, panel_id, provider=provider)
+    # 為什麼每次寫完站別就重算：
+    # - 狀態不應靠固定值；由「目前各站最新結果」動態推導才與現場流程一致。
+    _refresh_panel_status(cur, panel_id)
 
 
 def producer_loop(stop: threading.Event) -> None:

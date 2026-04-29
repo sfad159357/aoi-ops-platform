@@ -18,7 +18,7 @@ SIM_SCENARIO ?= normal
 export DOMAIN_PROFILE
 export SIM_SCENARIO
 
-.PHONY: up down restart seed smoke logs ps profile-pcb profile-semiconductor scenario-normal scenario-drift scenario-spike scenario-misjudge mssql-up mssql-down mssql-shell dev-up dev-down dev-restart dev-logs help
+.PHONY: up down restart seed smoke logs ps profile-pcb profile-semiconductor scenario-normal scenario-drift scenario-spike scenario-misjudge mssql-up mssql-down mssql-shell backend-rebuild dev-up dev-down dev-restart dev-logs help
 
 help:  ## 顯示可用指令
 	@echo "AOI Ops Platform — make targets"
@@ -30,6 +30,7 @@ help:  ## 顯示可用指令
 	@echo "  make smoke        # 對 backend 打幾個關鍵 API"
 	@echo "  make logs         # 跟 backend log（Ctrl-C 退出）"
 	@echo "  make ps           # 看容器狀態"
+	@echo "  make backend-rebuild  # 只重建 backend（避免 API 404 舊版容器）"
 	@echo ""
 	@echo "  make dev-up       # dev 模式：backend 用 dotnet watch（改 C# 不用 rebuild）"
 	@echo "  make dev-down"
@@ -168,3 +169,7 @@ mssql-shell:  ## 進 sqlcmd shell（用 SA 帳號）
 	docker run -it --rm --network aoiops_default --platform linux/amd64 \
 	  mcr.microsoft.com/mssql-tools:latest \
 	  /opt/mssql-tools/bin/sqlcmd -S mssql -U sa -P "$${MSSQL_SA_PASSWORD:-Your_password123!}"
+
+backend-rebuild:  ## 只重建 aoiops backend（更新新 API/DTO，避免 404）
+	# 為什麼固定 -p aoiops：避免 compose project name 漂移，誤啟動第二套容器（常見 1433 port 衝突）。
+	docker compose -p aoiops -f infra/docker/docker-compose.yml up -d --build --no-deps backend

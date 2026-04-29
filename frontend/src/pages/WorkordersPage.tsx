@@ -59,6 +59,10 @@ export default function WorkordersPage() {
   const [bootstrap, setBootstrap] = useState<WorkorderEvent[] | undefined>(undefined)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [dateFilter, setDateFilter] = useState<string>(() => todayYmd())
+  const [priorityFilters, setPriorityFilters] = useState<string[]>([])
+  const [lineFilters, setLineFilters] = useState<string[]>([])
+  const [stationFilters, setStationFilters] = useState<string[]>([])
+  const [toolFilters, setToolFilters] = useState<string[]>([])
   const baseUrl = useMemo(
     () => (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:8080',
     []
@@ -82,13 +86,61 @@ export default function WorkordersPage() {
 
   const { workorders, connectionState } = useWorkorderStream({ bootstrap, maxItems: 200 })
 
-  // 為什麼要做「日期篩選，預設今天」：
-  // - 工單屬於日常排程/追單工具，主管通常先看「今天新增/今天未結案」；
-  // - 預設今天能讓 demo 或實際使用時不會看到空白或被歷史工單淹沒。
-  const filteredWorkorders = useMemo(() => {
+  // 為什麼把日期先切成獨立資料集：
+  // - 讓後續多欄位篩選能與日期聯動，條件與選項都只針對同一天資料計算。
+  const dateScopedWorkorders = useMemo(() => {
     if (!dateFilter) return workorders
     return workorders.filter((w) => toYmd(w.createdAt) === dateFilter)
   }, [workorders, dateFilter])
+
+  // 為什麼選項依日期資料動態產生：
+  // - 避免出現使用者當天資料不存在的值，降低空結果的困惑感。
+  const priorityOptions = useMemo(
+    () => uniqueValues(dateScopedWorkorders, (w) => normalizeFilterValue(w.priority)),
+    [dateScopedWorkorders]
+  )
+  const lineOptions = useMemo(
+    () => uniqueValues(dateScopedWorkorders, (w) => normalizeFilterValue(w.lineCode)),
+    [dateScopedWorkorders]
+  )
+  const stationOptions = useMemo(
+    () => uniqueValues(dateScopedWorkorders, (w) => normalizeFilterValue(w.stationCode)),
+    [dateScopedWorkorders]
+  )
+  const toolOptions = useMemo(
+    () => uniqueValues(dateScopedWorkorders, (w) => normalizeFilterValue(w.toolCode)),
+    [dateScopedWorkorders]
+  )
+
+  // 為什麼日期切換要同步清理舊條件：
+  // - 若保留不存在於新日期的值，會造成結果被「隱形無效條件」過濾掉。
+  useEffect(() => {
+    setPriorityFilters((prev) => prev.filter((v) => priorityOptions.includes(v)))
+    setLineFilters((prev) => prev.filter((v) => lineOptions.includes(v)))
+    setStationFilters((prev) => prev.filter((v) => stationOptions.includes(v)))
+    setToolFilters((prev) => prev.filter((v) => toolOptions.includes(v)))
+  }, [priorityOptions, lineOptions, stationOptions, toolOptions])
+
+  // 為什麼多條件使用 AND：
+  // - 工單排查常見情境是「某日 + 某優先級 + 某產線/站別/機台」交集定位。
+  const filteredWorkorders = useMemo(() => {
+    const prioritySet = new Set(priorityFilters)
+    const lineSet = new Set(lineFilters)
+    const stationSet = new Set(stationFilters)
+    const toolSet = new Set(toolFilters)
+    return dateScopedWorkorders.filter((w) => {
+      const priority = normalizeFilterValue(w.priority)
+      const line = normalizeFilterValue(w.lineCode)
+      const station = normalizeFilterValue(w.stationCode)
+      const tool = normalizeFilterValue(w.toolCode)
+      return (
+        (prioritySet.size === 0 || prioritySet.has(priority)) &&
+        (lineSet.size === 0 || lineSet.has(line)) &&
+        (stationSet.size === 0 || stationSet.has(station)) &&
+        (toolSet.size === 0 || toolSet.has(tool))
+      )
+    })
+  }, [dateScopedWorkorders, priorityFilters, lineFilters, stationFilters, toolFilters])
 
   const grouped = useMemo(
     () => groupByYmd(filteredWorkorders, (w) => w.createdAt),
@@ -135,8 +187,48 @@ export default function WorkordersPage() {
             onChange={(e) => setDateFilter(e.target.value)}
             style={dateInputStyle}
           />
+          <button
+            type="button"
+            onClick={() => {
+              setDateFilter(todayYmd())
+              setPriorityFilters([])
+              setLineFilters([])
+              setStationFilters([])
+              setToolFilters([])
+            }}
+            style={resetButtonStyle}
+          >
+            清除全部篩選
+          </button>
           <div style={{ color: '#9ca3af', fontSize: 12 }}>共 {filteredWorkorders.length} 筆</div>
         </div>
+      </div>
+
+      <div style={filterRowStyle}>
+        <FilterMultiSelect
+          label="優先級"
+          options={priorityOptions}
+          selected={priorityFilters}
+          onChange={setPriorityFilters}
+        />
+        <FilterMultiSelect
+          label="產線"
+          options={lineOptions}
+          selected={lineFilters}
+          onChange={setLineFilters}
+        />
+        <FilterMultiSelect
+          label="站別"
+          options={stationOptions}
+          selected={stationFilters}
+          onChange={setStationFilters}
+        />
+        <FilterMultiSelect
+          label="機台"
+          options={toolOptions}
+          selected={toolFilters}
+          onChange={setToolFilters}
+        />
       </div>
 
       {loadError && (
@@ -154,7 +246,12 @@ export default function WorkordersPage() {
               <th style={thStyle}>產線</th>
               <th style={thStyle}>站別</th>
               <th style={thStyle}>機台</th>
-              <th style={thStyle}>{profile.entities.lot.labelZh ?? '工單批次'}</th>
+              {/* 為什麼 lot/panel 欄位標題改讀 profile：
+                  - 避免前端固定詞彙，讓不同 domain profile 可直接套用同一頁面。 */}
+              <th style={thStyle}>{profile.entities.lot.labelZh}</th>
+              {/* 為什麼此處固定顯示「板號」：
+                  - 與異常記錄頁用詞一致，降低跨頁切換時的理解成本；
+                  - 直接對應 panel_no 欄位，避免「板」過短造成語意不清。 */}
               <th style={thStyle}>板號</th>
               <th style={thStyle}>缺陷碼</th>
               <th style={thStyle}>負責人</th>
@@ -297,6 +394,67 @@ function labelForState(state: HubConnectionState | 'idle'): string {
   }
 }
 
+/**
+ * 工單管理頁多選篩選器。
+ *
+ * 為什麼沿用原生 multiple select：
+ * - 不引入 UI 套件即可支援多選，維持目前頁面低依賴與一致實作。
+ *
+ * 解決什麼問題：
+ * - 讓工單可同時以優先級/產線/站別/機台縮小範圍，快速定位待處理清單。
+ */
+function FilterMultiSelect({
+  label,
+  options,
+  selected,
+  onChange,
+}: {
+  label: string
+  options: string[]
+  selected: string[]
+  onChange: (values: string[]) => void
+}) {
+  // 為什麼要提供 All 預設值：
+  // - 使用者可直接辨識目前為「全部工單」視角，而不是靠空選取推測；
+  // - 多條件過濾後一鍵回到全量時，畫面語意更直觀。
+  const value = selected.length === 0 ? [ALL_FILTER_OPTION] : selected
+  return (
+    <label style={filterBlockStyle}>
+      <span style={{ color: '#9ca3af', fontSize: 12 }}>{label}</span>
+      <select
+        multiple
+        value={value}
+        onChange={(e) => {
+          const next = Array.from(e.currentTarget.selectedOptions, (o) => o.value)
+          if (next.length === 0 || next.includes(ALL_FILTER_OPTION)) {
+            onChange([])
+            return
+          }
+          onChange(next.filter((v) => v !== ALL_FILTER_OPTION))
+        }}
+        style={multiSelectStyle}
+      >
+        <option value={ALL_FILTER_OPTION}>{ALL_FILTER_OPTION}</option>
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+}
+
+function normalizeFilterValue(value: string | null | undefined): string {
+  return (value ?? '-').trim() || '-'
+}
+
+function uniqueValues<T>(rows: T[], pick: (row: T) => string): string[] {
+  return Array.from(new Set(rows.map(pick))).sort((a, b) => a.localeCompare(b, 'zh-Hant'))
+}
+
+const ALL_FILTER_OPTION = 'All'
+
 const pageStyle: React.CSSProperties = {
   background: '#0d1117',
   color: '#e5e7eb',
@@ -367,6 +525,40 @@ const dateInputStyle: React.CSSProperties = {
   borderRadius: 6,
   fontFamily: 'JetBrains Mono, monospace',
   fontSize: 12,
+}
+
+const resetButtonStyle: React.CSSProperties = {
+  background: '#1f2937',
+  color: '#e5e7eb',
+  border: '1px solid #374151',
+  borderRadius: 6,
+  padding: '6px 10px',
+  fontSize: 12,
+  cursor: 'pointer',
+}
+
+const filterRowStyle: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+  gap: 10,
+  marginBottom: 12,
+}
+
+const filterBlockStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 6,
+}
+
+const multiSelectStyle: React.CSSProperties = {
+  background: '#161b22',
+  color: '#e5e7eb',
+  border: '1px solid #21262d',
+  borderRadius: 6,
+  fontFamily: 'JetBrains Mono, monospace',
+  fontSize: 12,
+  minHeight: 84,
+  padding: 6,
 }
 
 const groupHeaderStyle: React.CSSProperties = {

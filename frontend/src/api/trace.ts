@@ -57,6 +57,17 @@ export type PanelTrace = {
   sameMaterialPanels: RelatedPanel[]
 }
 
+export type MaterialTrackingItem = {
+  panelNo: string
+  lotNo: string
+  materialLotNo: string
+  materialType: string
+  materialName: string | null
+  supplier: string | null
+  quantity: number | null
+  usedAt: string
+}
+
 export async function fetchPanelTrace(panelNo: string, signal?: AbortSignal): Promise<PanelTrace> {
   const res = await fetch(`${baseUrl}/api/trace/panel/${encodeURIComponent(panelNo)}`, { signal })
   if (!res.ok) {
@@ -70,6 +81,21 @@ export async function fetchRecentPanels(take = 20, signal?: AbortSignal): Promis
   const res = await fetch(`${baseUrl}/api/trace/panels/recent?take=${take}`, { signal })
   if (!res.ok) throw new Error(`recent panels failed: ${res.status}`)
   return (await res.json()) as RelatedPanel[]
+}
+
+// 為什麼補這支 API：
+// - 物料追蹤查詢要直接吃 panel_material_usage 真資料；
+// - 依日期由後端查詢可避免前端拿 recent panel 再二次過濾造成誤差。
+export async function fetchMaterialTracking(dateYmd: string, take = 500, signal?: AbortSignal): Promise<MaterialTrackingItem[]> {
+  const res = await fetch(
+    `${baseUrl}/api/trace/material-tracking?date=${encodeURIComponent(dateYmd)}&take=${take}`,
+    { signal },
+  )
+  if (!res.ok) {
+    const text = await safeText(res)
+    throw new Error(`material tracking failed: ${res.status} ${text}`)
+  }
+  return (await res.json()) as MaterialTrackingItem[]
 }
 
 async function safeText(res: Response): Promise<string> {
