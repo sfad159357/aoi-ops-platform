@@ -148,4 +148,34 @@ public sealed class SpcRulesEngineTests
         var payload = EvaluateLast(stream);
         Assert.DoesNotContain(payload.Violations, v => v.RuleId is >= 1 and <= 8);
     }
+
+    [Fact]
+    public void Evaluate_with_fixed_baseline_should_use_fixed_cl_and_sigma_for_control_lines_and_cpk()
+    {
+        // 為什麼要驗證這件事：
+        // - baseline 模式下，後續點必須沿用第一段暖機資料鎖定的 CL/σ，否則管制線會隨資料漂移。
+        var payload = SpcRulesEngine.Evaluate(
+            window: new[] { 1.0, 1.1, 0.9, 3.5 }, // 故意放偏移點，避免剛好等於固定 CL
+            lineCode: "SMT-A",
+            toolCode: "AOI-A01",
+            parameterCode: "yield_rate",
+            usl: 5.0,
+            lsl: 0.0,
+            target: 1.0,
+            timestamp: T0,
+            fixedCl: 1.25,
+            fixedSigma: 0.5);
+
+        Assert.Equal(1.25, payload.Cl, precision: 10);
+        Assert.Equal(0.5, payload.Sigma, precision: 10);
+        Assert.Equal(1.25 + 3 * 0.5, payload.Ucl, precision: 10);
+        Assert.Equal(1.25 - 3 * 0.5, payload.Lcl, precision: 10);
+
+        // Cpk 也應由固定 baseline CL/σ 計算，不應回落到動態窗口計算值。
+        var expectedCpu = (5.0 - 1.25) / (3 * 0.5);
+        var expectedCpl = (1.25 - 0.0) / (3 * 0.5);
+        var expectedCpk = Math.Min(expectedCpu, expectedCpl);
+        Assert.NotNull(payload.Cpk);
+        Assert.Equal(expectedCpk, payload.Cpk!.Value, precision: 10);
+    }
 }

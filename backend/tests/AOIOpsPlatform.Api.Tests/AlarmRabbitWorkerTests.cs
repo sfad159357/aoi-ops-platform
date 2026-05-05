@@ -27,7 +27,7 @@ public sealed class AlarmRabbitWorkerTests
         {
             Id = Guid.NewGuid(),
             LotNo = "WO-20260428-004",
-            ProductCode = "PCB-A",
+            ProductCode = "ABF-A",
             Quantity = 25,
             Status = "in_progress",
             CreatedAt = DateTimeOffset.UtcNow,
@@ -72,7 +72,7 @@ public sealed class AlarmRabbitWorkerTests
         {
             Id = Guid.NewGuid(),
             LotNo = "WO-20260428-005",
-            ProductCode = "PCB-A",
+            ProductCode = "ABF-A",
             Quantity = 25,
             Status = "in_progress",
             CreatedAt = DateTimeOffset.UtcNow,

@@ -37,11 +37,6 @@ type Props = {
   usl: number
   lsl: number
   target: number
-  /**
-   * 若後端 Cpk 因刻度不一致而失真，允許由外部傳入修正後的 Cpk。
-   * 為什麼需要：後端可能用 usl/lsl(0~1) 對 value(0~100) 算，導致 Cpk 顯示 -40 這種假負值。
-   */
-  cpkOverride?: number | null
 }
 
 /**
@@ -58,7 +53,6 @@ export default function ControlChartPair({
   usl,
   lsl,
   target,
-  cpkOverride = null,
 }: Props) {
   // ─── 顯示刻度統一（良率一律用 0~100% 顯示）────────────────────────────
   // 為什麼要做：後端可能推 0~1（已 NormalizeYieldToRatio）或 0~100（容器未重啟），
@@ -74,7 +68,7 @@ export default function ControlChartPair({
   const ucl = (lastPt?.ucl ?? target + (usl - lsl) / 6) * displayScale
   const cl = (lastPt?.cl ?? target) * displayScale
   const lcl = (lastPt?.lcl ?? target - (usl - lsl) / 6) * displayScale
-  const cpkText = formatCpk(cpkOverride ?? lastPt?.cpk ?? null)
+  const cpkText = formatCpk(lastPt?.cpk ?? null)
 
   // ─── Y 軸 domain（只用資料同一刻度的數值）─────────────────────────────
   // 為什麼要顯式計算：Recharts 預設只以「資料點」決定 domain，

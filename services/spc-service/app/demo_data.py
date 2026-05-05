@@ -119,7 +119,7 @@ def gen_p_chart_demo() -> dict:
     - 第 21 批次：超限（不良率約 12%）
     - 後 4 批次：回穩
 
-    適用場景：PCB 板面外觀不良率監控
+    適用場景：ABF 板面外觀不良率監控
     """
     rng = _seeded_rng(77)
     sample_size = 200

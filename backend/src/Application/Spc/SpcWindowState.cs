@@ -24,18 +24,35 @@ public sealed class SpcWindowState
     private readonly object _lock = new();
     private readonly Queue<double> _values;
     private readonly int _capacity;
+    private readonly int _baselineSampleSize;
     private bool _hasBaseline;
     private double _baselineCl;
     private double _baselineSigma;
 
-    public SpcWindowState(int capacity = 25)
+    public SpcWindowState(int capacity = 25, int baselineSampleSize = 20)
     {
+        if (capacity < 5)
+        {
+            throw new ArgumentOutOfRangeException(nameof(capacity), "capacity 至少要 >= 5 才有 SPC 判讀意義。");
+        }
+        if (baselineSampleSize < 5)
+        {
+            throw new ArgumentOutOfRangeException(nameof(baselineSampleSize), "baselineSampleSize 至少要 >= 5。");
+        }
+        if (baselineSampleSize > capacity)
+        {
+            throw new ArgumentOutOfRangeException(nameof(baselineSampleSize), "baselineSampleSize 不可大於 capacity。");
+        }
+
         _capacity = capacity;
+        _baselineSampleSize = baselineSampleSize;
         _values = new Queue<double>(capacity);
     }
 
     /// <summary>視窗最大尺寸。</summary>
     public int Capacity => _capacity;
+    /// <summary>Baseline 鎖定樣本數。</summary>
+    public int BaselineSampleSize => _baselineSampleSize;
 
     /// <summary>
     /// 加入一筆值，超過容量時丟掉最舊的；回傳當下完整視窗副本。
@@ -53,13 +70,13 @@ public sealed class SpcWindowState
             while (_values.Count > _capacity) _values.Dequeue();
 
             // Baseline（固定管制線）策略：
-            // - 先收滿 capacity（預設 25）個點，視為「穩定期」；
+            // - 先收滿 baselineSampleSize（預設 20）個點，視為「穩定期」；
             // - 只在第一次收滿時算一次 CL/σ，之後固定水平管制線（教科書 SPC 標準做法）。
             //
             // 為什麼不每點重算：
             // - 滑動視窗每點重算會讓 UCL/LCL 變成曲線，偏向監控儀表板而非傳統管制圖；
             // - 使用者要求參照「先收 20~25 點再固定」的流程，因此這裡把 baseline 鎖定起來。
-            if (!_hasBaseline && _values.Count == _capacity)
+            if (!_hasBaseline && _values.Count >= _baselineSampleSize)
             {
                 var arr = _values.ToArray();
                 _baselineCl = Mean(arr);
@@ -70,7 +87,7 @@ public sealed class SpcWindowState
             var window = _values.ToArray();
             return new SpcWindowSnapshot(
                 Window: window,
-                Baseline: _hasBaseline ? new SpcBaseline(_baselineCl, _baselineSigma, _capacity) : null);
+                Baseline: _hasBaseline ? new SpcBaseline(_baselineCl, _baselineSigma, _baselineSampleSize) : null);
         }
     }
 

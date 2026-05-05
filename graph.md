@@ -241,7 +241,7 @@ erDiagram
 ```
 
 > W08 新增三張表：`MATERIAL_LOTS` / `PANEL_MATERIAL_USAGE` / `PANEL_STATION_LOG`，
-> `WAFERS` 加 `panel_no varchar UNIQUE`（對外可讀識別，例：`PCB-20240422-LOT-001-1`）。
+> `WAFERS` 加 `panel_no varchar UNIQUE`（對外可讀識別，例：`ABF-20240422-LOT-001-1`）。
 >
 > `DOCUMENTS` / `DOCUMENT_CHUNKS` / `COPILOT_QUERIES` 為舊版殘留，標 deprecated，未來會移除。
 

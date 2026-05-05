@@ -4,7 +4,7 @@
 # 讓新成員「下載 repo 後 30 秒能起整套系統」，避免每個人記不同指令。
 #
 # 使用方式：
-#   make up                        # 啟動所有容器（預設 PCB profile）
+#   make up                        # 啟動所有容器（預設 ABF profile）
 #   make up DOMAIN_PROFILE=semiconductor   # 切換成半導體 profile
 #   make down                      # 關掉所有容器（保留 volume）
 #   make seed                      # 重建 DB（清掉 volume → 觸發 init script）
@@ -37,7 +37,7 @@ help:  ## 顯示可用指令
 	@echo "  make dev-restart"
 	@echo "  make dev-logs     # dev 模式下跟 backend log"
 	@echo ""
-	@echo "  make profile-pcb           # 切到 PCB profile（重啟 backend / frontend）"
+	@echo "  make profile-pcb           # 切到 ABF profile（重啟 backend / frontend）"
 	@echo "  make profile-semiconductor # 切到半導體 profile"
 
 up:  ## 啟動所有容器
@@ -121,9 +121,9 @@ dev-restart:  ## dev 模式重啟（不清 volume）
 dev-logs:  ## dev 模式跟 backend log
 	$(COMPOSE_DEV) logs -f backend
 
-profile-pcb:  ## 切換成 PCB profile（重啟 backend / frontend）
+profile-pcb:  ## 切換成 ABF profile（重啟 backend / frontend）
 	DOMAIN_PROFILE=pcb $(COMPOSE) up -d --force-recreate backend frontend
-	@echo ">> 已切換到 PCB profile"
+	@echo ">> 已切換到 ABF profile"
 
 profile-semiconductor:  ## 切換成半導體 profile（重啟 backend / frontend）
 	DOMAIN_PROFILE=semiconductor $(COMPOSE) up -d --force-recreate backend frontend

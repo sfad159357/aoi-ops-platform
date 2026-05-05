@@ -1,7 +1,7 @@
 // signalr.ts：SignalR 連線工廠。
 //
 // 為什麼集中在一個檔案：
-// - 4 個 Hub（SPC / Alarm / Workorder / Trace）都要重連 / 退避 / log 設定，分散寫會很零散；
+// - 3 個 Hub（SPC / Alarm / Workorder）都要重連 / 退避 / log 設定，分散寫會很零散；
 //   集中後每個 hook 只負責「連哪個 hub、註冊哪些 method」，更乾淨。
 // - 後端 hub 路徑改變時，只需改這裡一個常數。
 //

@@ -191,7 +191,7 @@ def u_chart(inp: UChartInput) -> AttributeChartResult:
     """
     U 圖（每單位缺陷數管制圖，樣本大小可變）。
 
-    **典型應用**：不同大小 PCB 板的每平方公分缺陷密度監控
+    **典型應用**：不同大小 ABF 板的每平方公分缺陷密度監控
     """
     from .rules import detect_rules as _dr
     u_vals, limits = calc_u_chart(inp.defect_counts, inp.sample_sizes)

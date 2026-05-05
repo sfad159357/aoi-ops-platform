@@ -125,7 +125,7 @@ function App() {
               
               <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
                 <h1 style={{ margin: 0, fontSize: 28, letterSpacing: 0.2 }}>
-                  MES模擬PCB生產線 <span style={{ opacity: 0.9 }}>DEMO</span>
+                  MES模擬ABF生產線 <span style={{ opacity: 0.9 }}>DEMO</span>
                 </h1>
             
               </div>

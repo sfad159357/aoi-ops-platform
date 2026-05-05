@@ -1,7 +1,7 @@
 namespace AOIOpsPlatform.Domain.Entities;
 
 /// <summary>
-/// Station（站別）主檔：PCB 高階製程 SPI / SMT / REFLOW / AOI / ICT / FQC。
+/// Station（站別）主檔：ABF 高階製程 SPI / SMT / REFLOW / AOI / ICT / FQC。
 /// </summary>
 /// <remarks>
 /// 為什麼站別也落 DB 一張表：

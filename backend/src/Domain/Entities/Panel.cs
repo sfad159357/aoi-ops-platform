@@ -1,16 +1,16 @@
 namespace AOIOpsPlatform.Domain.Entities;
 
 /// <summary>
-/// Panel（PCB 板）主檔，取代舊版 Wafer。
+/// Panel（ABF 板）主檔，取代舊版 Wafer。
 /// </summary>
 /// <remarks>
 /// 為什麼把 wafers 改名 panels：
-/// - 本平台已聚焦 PCB 高階製程（SPI/SMT/REFLOW/AOI/ICT/FQC），
+/// - 本平台已聚焦 ABF 高階製程（SPI/SMT/REFLOW/AOI/ICT/FQC），
 ///   wafer 半導體語意會讓 schema 與前端「板號」對不上，每次都要心算「wafer 就是 panel」。
 /// - 直接改名後 controllers/seed/ingestion/前端型別都用 PanelNo，零 mapping。
 ///
 /// 為什麼 PanelNo 從 nullable 升級成必填 + unique：
-/// - PCB 工廠的「掃 QR Code 找一張板」流程仰賴全廠唯一字串；
+/// - ABF 工廠的「掃 QR Code 找一張板」流程仰賴全廠唯一字串；
 /// - 既有資料即將砍掉重建，因此可以一次把 NOT NULL 約束建好，未來不會再有「沒 panel_no 的孤兒板」。
 ///
 /// 為什麼保留 LotNo 冗餘欄位：
@@ -27,7 +27,7 @@ public sealed class Panel
     /// <summary>冗餘欄位：對應 Lot.LotNo，避免 query 時要再 join lots。</summary>
     public string LotNo { get; set; } = null!;
 
-    /// <summary>板號，例如 PCB-20260428-LOT-001-1，必填且全廠唯一。</summary>
+    /// <summary>板號，例如 ABF-20260428-LOT-001-1，必填且全廠唯一。</summary>
     public string PanelNo { get; set; } = null!;
 
     /// <summary>板的當前狀態：in_progress / pass / fail / scrap。</summary>

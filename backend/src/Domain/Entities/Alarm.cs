@@ -29,7 +29,7 @@ public sealed class Alarm
     /// <summary>冗餘：批次/工單號，例如 WO-20260428-001。</summary>
     public string? LotNo { get; set; }
 
-    /// <summary>冗餘：板號，例如 PCB-20260428-WO-001-3。</summary>
+    /// <summary>冗餘：板號，例如 ABF-20260428-WO-001-3。</summary>
     public string? PanelNo { get; set; }
 
     /// <summary>冗餘：值班人員（OperatorCode），例如 OP-001。</summary>

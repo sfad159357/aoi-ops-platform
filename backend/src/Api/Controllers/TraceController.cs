@@ -10,7 +10,7 @@ namespace AOIOpsPlatform.Api.Controllers;
 /// </summary>
 /// <remarks>
 /// 為什麼把所有 wafer 用語改成 panel：
-/// - 系統聚焦 PCB 高階製程後，wafers 表已重新命名為 panels；
+/// - 系統聚焦 ABF 高階製程後，wafers 表已重新命名為 panels；
 ///   controller 直接吃 panel.PanelNo 不再需要心算 wafer ↔ panel。
 ///
 /// 為什麼仍保留 profile.Stations 的 enrich 動作：

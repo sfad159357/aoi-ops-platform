@@ -102,7 +102,7 @@ aoi-ops-platform/
 
   shared/                       ← W05
     domain-profiles/
-      pcb.json                  ← 預設 profile（PCB SMT）
+      pcb.json                  ← 預設 profile（ABF SMT）
       semiconductor.json        ← 半導體用語
       README.md
 

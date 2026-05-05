@@ -21,7 +21,6 @@ import ViolationTable from '../components/spc/ViolationTable'
 import {
   computeObservationWindow,
   computeTodayYieldRate,
-  computeCorrectedCpk,
   countTodayViolationQtyInWindow,
   isBackendViolationPoint,
   type ObservationWindowStats,
@@ -127,13 +126,6 @@ export default function SpcDashboard() {
     [filteredPoints],
   )
 
-  // 前端重算 Cpk：後端因 usl/lsl（0~1 比例）vs value（0~100 百分比）刻度不同，Cpk 會算成 −40。
-  // 用後端給的 cl（mean）與 sigma（同一刻度），再把 usl/lsl 換算到與 value 相同刻度後重算，即可修正。
-  const correctedCpk = useMemo(
-    () => computeCorrectedCpk(filteredPoints.at(-1), parameter?.usl ?? 1, parameter?.lsl ?? 0),
-    [filteredPoints, parameter],
-  )
-
   // profile 的 good_threshold 仍以「件/小時」填寫；顯示為件/秒 時，達標比輯換算為 threshold/3600
   const panelsPerSecKpiConfig = useMemo(() => {
     const c = profile.kpi['panels_per_hour'] ?? { labelZh: '每秒產出' }
@@ -167,8 +159,9 @@ export default function SpcDashboard() {
       {
         key: 'cpk',
         config: cpkKpi ?? { labelZh: 'Cpk' },
-        // 用前端重算的 correctedCpk，避免後端刻度不一致導致顯示 −40 的假負值
-        value: correctedCpk,
+        // 為什麼直接取最新點 cpk：
+        // - Cpk 統一由後端規則引擎計算，前端只負責展示，避免前後端雙重計算導致口徑漂移。
+        value: filteredPoints.at(-1)?.cpk ?? null,
         format: 'decimal2',
         caption: '看製程穩不穩定，數字越高代表越穩。',
       },
@@ -199,7 +192,7 @@ export default function SpcDashboard() {
         caption: '從這次觀測開始到現在，總共累積幾件。',
       },
     ]
-  }, [profile, cumulativeQty, panelsPerSecKpiConfig, qtyPerSec, violationTodayCount, windowStats])
+  }, [profile, filteredPoints, cumulativeQty, panelsPerSecKpiConfig, qtyPerSec, violationTodayCount, windowStats])
 
   return (
     <div
@@ -271,7 +264,6 @@ export default function SpcDashboard() {
           usl={parameter?.usl ?? 1}
           lsl={parameter?.lsl ?? 0}
           target={parameter?.target ?? 0.5}
-          cpkOverride={correctedCpk}
         />
 
         <ViolationTable

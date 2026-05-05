@@ -207,7 +207,7 @@ export default function TraceabilityPage() {
         <input
           value={panelNoInput}
           onChange={(e) => setPanelNoInput(e.target.value)}
-          placeholder="例如 PCB-20240422-LOT-001-1"
+          placeholder="例如 ABF-20240422-LOT-001-1"
           style={inputStyle}
         />
         <input

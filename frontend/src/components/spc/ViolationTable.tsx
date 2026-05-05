@@ -138,7 +138,7 @@ function ViolationRow({
   const color = top.severity === 'red' ? '#f85149' : top.severity === 'yellow' ? '#f0b429' : '#3fb950'
 
   // 為什麼板號 fallback 顯示 panelNo：
-  // - SignalR 已從 ingestion 帶來 panelNo（lot_no-wafer_no），優先用 panelNo 比 waferNo 更貼近 PCB 語意；
+  // - SignalR 已從 ingestion 帶來 panelNo（lot_no-wafer_no），優先用 panelNo 比 waferNo 更貼近 ABF 語意；
   // - waferNo 仍保留作 fallback，避免半導體 profile 沒 panel_no 時就空白。
   const panelText = row.panelNo
     ? row.panelNo

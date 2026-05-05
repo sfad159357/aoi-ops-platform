@@ -212,7 +212,7 @@ public sealed class AlarmRabbitWorker : IRabbitMessageHandler
         {
             Id = Guid.NewGuid(),
             LotNo = lotNo!,
-            ProductCode = "PCB-AUTO",
+            ProductCode = "ABF-AUTO",
             Quantity = 25,
             StartTime = DateTimeOffset.UtcNow,
             Status = "in_progress",

@@ -379,7 +379,7 @@ def build_defect_event(*, tool_code: str, lot_no: str, wafer_no: int, severity: 
     為什麼 payload 加 panel_no / station_code / operator / x_coord / y_coord：
     - alarms 與 defects 表現在都需要冗餘 panel_no / station_code / operator；
       讓 Worker 端寫 DB 時免再 JOIN，也讓前端列表能直接顯示。
-    - 缺陷座標（x/y）是 PCB AOI 的標準欄位，雖然 alarm 列表不會渲染，但 defects 表的追溯查詢會用到。
+    - 缺陷座標（x/y）是 ABF AOI 的標準欄位，雖然 alarm 列表不會渲染，但 defects 表的追溯查詢會用到。
     """
 
     line_code = TOOL_TO_LINE.get(tool_code)
@@ -462,7 +462,7 @@ def _get_or_create_panel_id(cur, lot_id: str, lot_no: str, wafer_no: str, *, pro
     依 (lot_id, panel_no) 查 panels；找不到就建立一筆。
 
     為什麼要把 wafer_id 改名 panel_id：
-    - 系統聚焦 PCB 高階製程後，DB 已將 wafers 表改名 panels；
+    - 系統聚焦 ABF 高階製程後，DB 已將 wafers 表改名 panels；
       這裡同步換掉，避免 INSERT 失敗或寫到不存在的表。
 
     為什麼回傳 (panel_id, panel_no)：

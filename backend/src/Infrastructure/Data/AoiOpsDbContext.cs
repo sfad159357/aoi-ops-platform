@@ -186,7 +186,7 @@ public sealed class AoiOpsDbContext : DbContext
     }
 
     /// <summary>
-    /// 設定 PCB 核心表（panels）。
+    /// 設定 ABF 核心表（panels）。
     /// </summary>
     /// <remarks>
     /// 為什麼 panel_no 改成 NOT NULL + UNIQUE（不再用 nullable filter）：
@@ -211,7 +211,7 @@ public sealed class AoiOpsDbContext : DbContext
 
             // 為什麼 panel→lot OnDelete 設 Cascade：
             // - 一個 lot 被刪通常代表整個批次廢棄；保留 panel 卻沒有 lot 沒有意義。
-            // - PCB 場景批次量小（25 片左右），cascade 不會誤刪海量資料。
+            // - ABF 場景批次量小（25 片左右），cascade 不會誤刪海量資料。
             b.HasOne(x => x.Lot)
                 .WithMany(l => l.Panels)
                 .HasForeignKey(x => x.LotId)

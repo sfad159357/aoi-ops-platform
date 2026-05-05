@@ -5,7 +5,7 @@
 // - List 用 IReadOnlyList 暴露給呼叫端，避免 controller / worker 不小心改到單例。
 //
 // 解決什麼問題：
-// - 把「同一份 codebase 跑 PCB 或半導體」的差異收斂到 JSON，
+// - 把「同一份 codebase 跑 ABF 或半導體」的差異收斂到 JSON，
 //   程式碼從「寫死字串」變成「從 profile 拿欄位」，未來新增第三產業只要加 JSON。
 
 using System.Text.Json.Serialization;

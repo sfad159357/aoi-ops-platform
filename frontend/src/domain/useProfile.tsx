@@ -153,7 +153,7 @@ function normalizeProfile(raw: unknown): DomainProfile {
 }
 
 /**
- * 取當前 profile；尚未包在 Provider 內時會 fallback 為 PCB profile。
+ * 取當前 profile；尚未包在 Provider 內時會 fallback 為 ABF profile。
  *
  * 為什麼提供 fallback：
  * - 元件單獨渲染（例如 Storybook / 測試）也能跑，不需要強制 wrap Provider。

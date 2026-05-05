@@ -5,7 +5,7 @@ namespace AOIOpsPlatform.Domain.Entities;
 /// </summary>
 /// <remarks>
 /// 為什麼把原本的 WaferId 改成 PanelId：
-/// - 系統已聚焦 PCB 製程，wafer 語意只會讓報表與前端欄位對不上。
+/// - 系統已聚焦 ABF 製程，wafer 語意只會讓報表與前端欄位對不上。
 /// - 同步冗餘 ToolCode / LotNo / PanelNo，讓 dashboard 直接 Select 不必 JOIN 三張母表。
 /// </remarks>
 public sealed class ProcessRun

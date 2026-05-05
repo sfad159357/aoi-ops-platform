@@ -8,7 +8,7 @@
 
 主軸：**即時生產 → 儲存 → 消費 → API 回傳 → 即時監控 → 即時運算 → 業務模組 → 可追溯查表**。
 
-> 同一份 codebase 透過 **Domain Profile** 機制（`shared/domain-profiles/{profile}.json`），可切換 PCB / 半導體用語與規格。
+> 同一份 codebase 透過 **Domain Profile** 機制（`shared/domain-profiles/{profile}.json`），可切換 ABF / 半導體用語與規格。
 > 不做 ML / RAG / Knowledge Copilot，不使用 MQTT / OPC-UA。
 
 ---

@@ -1,9 +1,9 @@
 {
   "profileId": "pcb",
-  "displayName": "PCB產線 MES",
-  "factory": { "name": "範例：華通電腦", "site": "桃園廠" },
+  "displayName": "ABF產線 MES",
+  "factory": { "name": "範例：景碩科技", "site": "石磊廠" },
   "entities": {
-    "panel": { "table": "wafers", "labelZh": "板", "idPrefix": "PCB" },
+    "panel": { "table": "wafers", "labelZh": "板", "idPrefix": "ABF" },
     "lot":   { "table": "lots",   "labelZh": "工單批次", "idPrefix": "WO" },
     "tool":  { "table": "tools",  "labelZh": "機台" }
   },

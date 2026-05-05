@@ -160,33 +160,6 @@ export function computeTodayYieldRate(points: SpcPointPayload[]): number | null 
   return goodQty / totalQty
 }
 
-/**
- * 前端重算 Cpk，解決後端因刻度不一致（value 在 0~100、usl/lsl 在 0~1）導致 Cpk 極端負值的問題。
- *
- * 為什麼在前端重算而不只靠後端值：
- * - 後端 ProcessCapability 使用 profile 的 usl/lsl（0~1 比例）對 0~100 的 value 做計算，
- *   產生 cpu=(1−97)/(3×0.8)≈−40，Cpk 必然極端負。
- * - 後端送來的 cl（= mean）與 sigma 都是從視窗資料計算，與 value 同刻度，可以信任；
- *   只需把 usl/lsl 換算到相同刻度（dataIsPercent 時乘 100）再算 Cpk 即正確。
- * - 後端容器重建後 value 會正規化到 0~1，此函式同樣有效（乘 1 = 不變）。
- */
-export function computeCorrectedCpk(
-  lastPoint: SpcPointPayload | undefined,
-  usl: number,
-  lsl: number,
-): number | null {
-  if (!lastPoint) return null
-  const { sigma, cl: mean, value } = lastPoint
-  if (!sigma || sigma <= 0 || !isFinite(sigma)) return null
-  // 若最新 value > 1.5，視為百分比刻度（0~100）；把 profile 的 0~1 usl/lsl 等比放大
-  const dataIsPercent = value > 1.5
-  const chartUsl = dataIsPercent && usl <= 1.5 ? usl * 100 : usl
-  const chartLsl = dataIsPercent && lsl <= 1.5 ? lsl * 100 : lsl
-  const cpu = (chartUsl - mean) / (3 * sigma)
-  const cpl = (mean - chartLsl) / (3 * sigma)
-  return Math.min(cpu, cpl)
-}
-
 function isTimestampLocalDay(iso: string, referenceDay: Date): boolean {
   const d = new Date(iso)
   return (

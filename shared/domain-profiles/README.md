@@ -1,6 +1,6 @@
 # Domain Profiles
 
-> 同一份 codebase 透過 JSON profile 切換 PCB / 半導體 / 其他產業的 UI 與標籤。
+> 同一份 codebase 透過 JSON profile 切換 ABF / 半導體 / 其他產業的 UI 與標籤。
 
 ## 為什麼存在
 
@@ -12,7 +12,7 @@
 
 ```
 shared/domain-profiles/
-  pcb.json              # 預設：PCB SMT 產線 MES
+  pcb.json              # 預設：ABF SMT 產線 MES
   semiconductor.json    # 半導體保留原語境
   README.md             # 本文件
 ```

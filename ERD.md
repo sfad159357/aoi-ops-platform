@@ -21,7 +21,7 @@
 | id | uniqueidentifier PK | |
 | tool_code | varchar | 機台代號（唯一） |
 | tool_name | varchar | 顯示名稱 |
-| tool_type | varchar | SPI / SMT / REFLOW / AOI / ICT / FQC（PCB profile）/ AOI / PLC / SCADA（semiconductor profile） |
+| tool_type | varchar | SPI / SMT / REFLOW / AOI / ICT / FQC（ABF profile）/ AOI / PLC / SCADA（semiconductor profile） |
 | status | varchar | online / offline / alarm |
 | location | varchar | 廠區位置 |
 | created_at | datetimeoffset | |
@@ -49,14 +49,14 @@
 | created_at | datetimeoffset | |
 
 ### 4. wafers（板 / 晶圓）
-> 表名沿用 `wafers` 不變；對外顯示由 domain profile 決定（PCB → 「板」 / Semiconductor → 「晶圓」）。
+> 表名沿用 `wafers` 不變；對外顯示由 domain profile 決定（ABF → 「板」 / Semiconductor → 「晶圓」）。
 
 | 欄位 | 類型 | 說明 |
 |------|------|------|
 | id | uniqueidentifier PK | |
 | lot_id | uniqueidentifier FK → lots | |
 | wafer_no | int | 片號 / 板號（同 lot 內唯一） |
-| **panel_no** | varchar | **W08 新增**：對外可讀識別（例：`PCB-20240422-LOT-001-1`），全表 UNIQUE，nullable |
+| **panel_no** | varchar | **W08 新增**：對外可讀識別（例：`ABF-20240422-LOT-001-1`），全表 UNIQUE，nullable |
 | status | varchar | |
 | created_at | datetimeoffset | |
 

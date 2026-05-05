@@ -32,6 +32,8 @@ public sealed class SpcRealtimeWorker : IKafkaMessageHandler
     private readonly IRealtimeMetrics _metrics;
     private readonly ISpcMeasurementSink _measurementSink;
     private readonly ILogger<SpcRealtimeWorker> _logger;
+    private readonly int _windowCapacity;
+    private readonly int _baselineSampleSize;
 
     /// <summary>
     /// 為什麼用 ConcurrentDictionary 收 window：
@@ -54,6 +56,14 @@ public sealed class SpcRealtimeWorker : IKafkaMessageHandler
         _measurementSink = measurementSink;
         _logger = logger;
         Topic = configuration["Messaging:Kafka:TopicInspectionRaw"] ?? "aoi.inspection.raw";
+        _windowCapacity = ReadPositiveIntOrDefault(configuration["Spc:WindowCapacity"], 25);
+        // 為什麼預設 20：
+        // - MES/SPC 實務常用「先收 20~25 點建立基準」；這裡以 20 做最小可用暖機，並且可透過設定提高到 25。
+        _baselineSampleSize = ReadPositiveIntOrDefault(configuration["Spc:BaselineSampleSize"], 20);
+        if (_baselineSampleSize > _windowCapacity)
+        {
+            _baselineSampleSize = _windowCapacity;
+        }
     }
 
     public string Topic { get; }
@@ -92,7 +102,9 @@ public sealed class SpcRealtimeWorker : IKafkaMessageHandler
             if (v is null) continue;
 
             var key2 = $"{lineCode}|{evt.ToolCode}|{parameter.Code}";
-            var state = _windows.GetOrAdd(key2, _ => new SpcWindowState(capacity: 25));
+            var state = _windows.GetOrAdd(
+                key2,
+                _ => new SpcWindowState(capacity: _windowCapacity, baselineSampleSize: _baselineSampleSize));
             var snap = state.Add(v.Value);
             var window = snap.Window;
 
@@ -250,6 +262,12 @@ public sealed class SpcRealtimeWorker : IKafkaMessageHandler
     }
 
     private static string Truncate(string s) => s.Length <= 200 ? s : s[..200] + "…";
+
+    private static int ReadPositiveIntOrDefault(string? raw, int defaultValue)
+    {
+        if (!int.TryParse(raw, out var n)) return defaultValue;
+        return n >= 1 ? n : defaultValue;
+    }
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {

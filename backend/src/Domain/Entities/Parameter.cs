@@ -1,7 +1,7 @@
 namespace AOIOpsPlatform.Domain.Entities;
 
 /// <summary>
-/// Parameter（量測參數）主檔，對齊 PCB profile 的 parameters[]：
+/// Parameter（量測參數）主檔，對齊 ABF profile 的 parameters[]：
 /// solder_thickness / reflow_peak_temp / hole_tolerance 等。
 /// </summary>
 /// <remarks>

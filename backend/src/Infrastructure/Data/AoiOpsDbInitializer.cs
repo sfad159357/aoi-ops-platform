@@ -8,7 +8,7 @@ using Microsoft.Extensions.Logging;
 namespace AOIOpsPlatform.Infrastructure.Data;
 
 /// <summary>
-/// DB 初始化器：在開發環境跑 migrations + seed PCB 高階製程的最小可用資料集。
+/// DB 初始化器：在開發環境跑 migrations + seed ABF 高階製程的最小可用資料集。
 /// </summary>
 /// <remarks>
 /// 為什麼從 EnsureCreated 改成 MigrateAsync：
@@ -56,7 +56,7 @@ public static class AoiOpsDbInitializer
         }
         else
         {
-            logger.LogInformation("Tools 已有資料，跳過 PCB demo seed。");
+            logger.LogInformation("Tools 已有資料，跳過 ABF demo seed。");
         }
     }
 
@@ -132,7 +132,7 @@ public static class AoiOpsDbInitializer
     }
 
     /// <summary>
-    /// 種一份 PCB 高階製程的豐富 demo 資料：員工 / 多機台 / 多批次 / 多板 / 6 站歷程 / 物料 / SPC 量測 / 歷史 alarms+workorders+defects。
+    /// 種一份 ABF 高階製程的豐富 demo 資料：員工 / 多機台 / 多批次 / 多板 / 6 站歷程 / 物料 / SPC 量測 / 歷史 alarms+workorders+defects。
     /// </summary>
     /// <remarks>
     /// 為什麼一次種完整鏈路 + 大量歷史：
@@ -150,7 +150,7 @@ public static class AoiOpsDbInitializer
         ILogger logger,
         CancellationToken cancellationToken)
     {
-        logger.LogInformation("Seeding PCB demo data (rich) ...");
+        logger.LogInformation("Seeding ABF demo data (rich) ...");
         var now = DateTimeOffset.UtcNow;
         var rng = new Random(20260428);
 
@@ -193,7 +193,7 @@ public static class AoiOpsDbInitializer
             return operators[idx].OperatorCode;
         }
 
-        // ─── 1. lines（從 master 撈出，支援 PCB profile 的 SMT-A / SMT-B / AOI-A） ───
+        // ─── 1. lines（從 master 撈出，支援 ABF profile 的 SMT-A / SMT-B / AOI-A） ───
         var lines = await db.Lines.ToListAsync(cancellationToken);
         var smtLineA = lines.FirstOrDefault(l => l.LineCode.Equals("SMT-A", StringComparison.OrdinalIgnoreCase));
         var smtLineB = lines.FirstOrDefault(l => l.LineCode.Equals("SMT-B", StringComparison.OrdinalIgnoreCase));
@@ -233,10 +233,10 @@ public static class AoiOpsDbInitializer
         var recipe = new Recipe
         {
             Id = Guid.NewGuid(),
-            RecipeCode = "RCP-PCB-001",
-            RecipeName = "PCB Baseline Recipe",
+            RecipeCode = "RCP-ABF-001",
+            RecipeName = "ABF Baseline Recipe",
             Version = "v1",
-            Description = "Demo recipe for PCB SMT/AOI line",
+            Description = "Demo recipe for ABF SMT/AOI line",
             CreatedAt = now,
         };
         db.Recipes.Add(recipe);
@@ -249,7 +249,7 @@ public static class AoiOpsDbInitializer
         {
             Id = Guid.NewGuid(),
             LotNo = $"WO-{now:yyyyMMdd}-{i:000}",
-            ProductCode = "PCB-A",
+            ProductCode = "ABF-A",
             Quantity = 25,
             StartTime = now.AddHours(-i * 1.5),
             EndTime = lotStatuses[i - 1] == "completed" ? now.AddHours(-i * 1.5 + 4) : (DateTimeOffset?)null,
@@ -280,7 +280,7 @@ public static class AoiOpsDbInitializer
         }
         db.Panels.AddRange(panels);
 
-        // ─── 6. material_lots：5 種常見 PCB 物料 ───────────────────────
+        // ─── 6. material_lots：5 種常見 ABF 物料 ───────────────────────
         var materialDefs = new (string Code, string Type, string Name, string Supplier)[]
         {
             ($"SOLDER-{now:yyyyMMdd}-001", "solder_paste", "錫膏 SAC305", "ABC Solder Co."),
@@ -302,7 +302,7 @@ public static class AoiOpsDbInitializer
         db.MaterialLots.AddRange(materials);
 
         // ─── 7. panel_material_usage：每張板用 3 種物料 ────────────────
-        // 為什麼每板 3 種：對應 PCB 真實情境（錫膏 + FR4 板材 + 元件），
+        // 為什麼每板 3 種：對應 ABF 真實情境（錫膏 + FR4 板材 + 元件），
         //   讓物料追溯查詢頁打開就能看到「板 ↔ 物料 ↔ 同物料其他板」三層關聯。
         var usages = new List<PanelMaterialUsage>();
         foreach (var panel in panels)
@@ -560,7 +560,7 @@ public static class AoiOpsDbInitializer
 
         await db.SaveChangesAsync(cancellationToken);
         logger.LogInformation(
-            "PCB demo seed completed (rich). operators={Operators} tools={Tools} lots={Lots} panels={Panels} " +
+            "ABF demo seed completed (rich). operators={Operators} tools={Tools} lots={Lots} panels={Panels} " +
             "stations={Stations} alarms={Alarms} workorders={WO} defects={Defects} spc={Spc}",
             operators.Count, tools.Count, lots.Count, panels.Count,
             stationCodes.Length, alarms.Count, workorders.Count, defects.Count, spcPoints.Count);
