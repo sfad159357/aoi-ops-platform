@@ -160,8 +160,13 @@ export default function ProductionWorkOrdersPage() {
                         {pwo.lots.map((lot) => (
                           <div key={lot.id} style={lotCardStyle}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
-                              <div style={{ fontFamily: mono.fontFamily, fontSize: 12, color: '#e5e7eb' }}>
-                                {lot.lotNo}
+                              <div>
+                                <div style={{ fontFamily: mono.fontFamily, fontSize: 12, color: '#e5e7eb' }}>
+                                  {lot.lotNo}
+                                </div>
+                                <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>
+                                  共 {lot.panels.length} 張板
+                                </div>
                               </div>
                               <div style={{ fontSize: 12, color: '#9ca3af' }}>{lot.status ?? '-'}</div>
                             </div>
@@ -170,8 +175,8 @@ export default function ProductionWorkOrdersPage() {
                               推導（與板號/批次查詢一致）；右欄為依 <code style={monoCodeInline}>stations.seq</code>{' '}
                               流程順序的「目前站點」。
                             </div>
-                            <div style={{ marginTop: 8, display: 'grid', gap: 6 }}>
-                              {lot.panels.slice(0, 5).map((p) => (
+                            <div style={panelGridStyle}>
+                              {lot.panels.map((p) => (
                                 <div key={p.id} style={panelRowStyle}>
                                   <div style={{ fontFamily: mono.fontFamily, fontSize: 12 }}>{p.panelNo}</div>
                                   <div style={{ fontSize: 12, color: colorForPanelStatus(p.status) }}>
@@ -320,13 +325,20 @@ const tdMonoStyle: React.CSSProperties = {
 }
 
 const lotCardStyle: React.CSSProperties = {
-  minWidth: 260,
-  maxWidth: 360,
-  flex: '1 1 260px',
+  minWidth: 520,
+  maxWidth: '100%',
+  flex: '1 1 520px',
   border: '1px solid rgba(148,163,184,0.18)',
   borderRadius: 12,
   padding: '10px 10px 8px',
   background: 'rgba(15,23,42,0.35)',
+}
+
+const panelGridStyle: React.CSSProperties = {
+  marginTop: 8,
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+  gap: 8,
 }
 
 const panelRowStyle: React.CSSProperties = {

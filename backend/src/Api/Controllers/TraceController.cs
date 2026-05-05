@@ -87,6 +87,12 @@ public sealed class TraceController : ControllerBase
         decimal? Quantity,
         DateTimeOffset UsedAt);
 
+    private sealed record DerivedPanelRow(
+        Guid Id,
+        string PanelNo,
+        string LotNo,
+        DateTimeOffset CreatedAt);
+
     /// <summary>
     /// 取得指定板的完整追溯資訊。
     /// </summary>
@@ -209,26 +215,56 @@ public sealed class TraceController : ControllerBase
             x.Material.ReceivedAt,
             x.Usage.Quantity)).ToList();
 
-        // 同 lot 板：直接 .Select Panel entity 即可。
-        var sameLotPanels = await _db.Panels
+        var sameLotPanelRows = await _db.Panels
             .AsNoTracking()
             .Where(p => p.LotId == panel.LotId && p.Id != panel.Id)
             .OrderBy(p => p.CreatedAt)
             .Take(50)
-            .Select(p => new RelatedPanelDto(p.PanelNo, p.LotNo, p.Status, p.CreatedAt))
+            .Select(p => new DerivedPanelRow(p.Id, p.PanelNo, p.LotNo, p.CreatedAt))
             .ToListAsync(cancellationToken);
 
-        // 同物料板：透過 panel_material_usage 找對應 panel，因為 usage 已冗餘 panel_no/lot_no(間接) 我們仍要關 panels 表拿 status 與 createdAt。
+        // 同物料板：透過 panel_material_usage 找對應 panel，但板狀態仍需由 station log 推導。
         var materialIds = usages.Select(x => x.Material.Id).ToList();
-        var sameMaterialPanels = await (
+        var sameMaterialPanelRows = await (
             from u in _db.PanelMaterialUsages.AsNoTracking()
             join p in _db.Panels.AsNoTracking() on u.PanelId equals p.Id
             where materialIds.Contains(u.MaterialLotId) && p.Id != panel.Id
             orderby u.UsedAt descending
-            select new RelatedPanelDto(p.PanelNo, p.LotNo, p.Status, p.CreatedAt))
+            select new DerivedPanelRow(p.Id, p.PanelNo, p.LotNo, p.CreatedAt))
             .Distinct()
             .Take(50)
             .ToListAsync(cancellationToken);
+
+        var relatedPanelIds = sameLotPanelRows.Select(x => x.Id)
+            .Concat(sameMaterialPanelRows.Select(x => x.Id))
+            .Distinct()
+            .ToList();
+
+        var relatedLogsByPanel = relatedPanelIds.Count == 0
+            ? new Dictionary<Guid, List<Domain.Entities.PanelStationLog>>()
+            : (await _db.PanelStationLogs
+                    .AsNoTracking()
+                    .Where(l => relatedPanelIds.Contains(l.PanelId))
+                    .OrderBy(l => l.EnteredAt)
+                    .ToListAsync(cancellationToken))
+                .GroupBy(l => l.PanelId)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
+        var sameLotPanels = sameLotPanelRows
+            .Select(p => new RelatedPanelDto(
+                p.PanelNo,
+                p.LotNo,
+                DerivePanelProductionStatus(relatedLogsByPanel.GetValueOrDefault(p.Id) ?? new List<Domain.Entities.PanelStationLog>(), requiredStations),
+                p.CreatedAt))
+            .ToList();
+
+        var sameMaterialPanels = sameMaterialPanelRows
+            .Select(p => new RelatedPanelDto(
+                p.PanelNo,
+                p.LotNo,
+                DerivePanelProductionStatus(relatedLogsByPanel.GetValueOrDefault(p.Id) ?? new List<Domain.Entities.PanelStationLog>(), requiredStations),
+                p.CreatedAt))
+            .ToList();
 
         var dto = new PanelTraceDto(
             new PanelInfoDto(panel.PanelNo, panel.LotNo, derivedStatus, pwoId, workOrderNo, panel.CreatedAt),
@@ -249,12 +285,37 @@ public sealed class TraceController : ControllerBase
         CancellationToken cancellationToken = default)
     {
         take = Math.Clamp(take, 1, 100);
-        var items = await _db.Panels
+        var requiredStations = await _db.Stations
+            .AsNoTracking()
+            .OrderBy(s => s.Seq)
+            .Select(s => s.StationCode)
+            .ToListAsync(cancellationToken);
+
+        var panelRows = await _db.Panels
             .AsNoTracking()
             .OrderByDescending(p => p.CreatedAt)
             .Take(take)
-            .Select(p => new RelatedPanelDto(p.PanelNo, p.LotNo, p.Status, p.CreatedAt))
+            .Select(p => new DerivedPanelRow(p.Id, p.PanelNo, p.LotNo, p.CreatedAt))
             .ToListAsync(cancellationToken);
+
+        var panelIds = panelRows.Select(p => p.Id).ToList();
+        var logsByPanel = panelIds.Count == 0
+            ? new Dictionary<Guid, List<Domain.Entities.PanelStationLog>>()
+            : (await _db.PanelStationLogs
+                    .AsNoTracking()
+                    .Where(l => panelIds.Contains(l.PanelId))
+                    .OrderBy(l => l.EnteredAt)
+                    .ToListAsync(cancellationToken))
+                .GroupBy(l => l.PanelId)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
+        var items = panelRows
+            .Select(p => new RelatedPanelDto(
+                p.PanelNo,
+                p.LotNo,
+                DerivePanelProductionStatus(logsByPanel.GetValueOrDefault(p.Id) ?? new List<Domain.Entities.PanelStationLog>(), requiredStations),
+                p.CreatedAt))
+            .ToList();
         return Ok(items);
     }
 
@@ -282,13 +343,38 @@ public sealed class TraceController : ControllerBase
 
         take = Math.Clamp(take, 1, 500);
         var key = lotNo.Trim();
-        var items = await _db.Panels
+        var requiredStations = await _db.Stations
+            .AsNoTracking()
+            .OrderBy(s => s.Seq)
+            .Select(s => s.StationCode)
+            .ToListAsync(cancellationToken);
+
+        var panelRows = await _db.Panels
             .AsNoTracking()
             .Where(p => p.LotNo == key)
             .OrderBy(p => p.CreatedAt)
             .Take(take)
-            .Select(p => new RelatedPanelDto(p.PanelNo, p.LotNo, p.Status, p.CreatedAt))
+            .Select(p => new DerivedPanelRow(p.Id, p.PanelNo, p.LotNo, p.CreatedAt))
             .ToListAsync(cancellationToken);
+
+        var panelIds = panelRows.Select(p => p.Id).ToList();
+        var logsByPanel = panelIds.Count == 0
+            ? new Dictionary<Guid, List<Domain.Entities.PanelStationLog>>()
+            : (await _db.PanelStationLogs
+                    .AsNoTracking()
+                    .Where(l => panelIds.Contains(l.PanelId))
+                    .OrderBy(l => l.EnteredAt)
+                    .ToListAsync(cancellationToken))
+                .GroupBy(l => l.PanelId)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
+        var items = panelRows
+            .Select(p => new RelatedPanelDto(
+                p.PanelNo,
+                p.LotNo,
+                DerivePanelProductionStatus(logsByPanel.GetValueOrDefault(p.Id) ?? new List<Domain.Entities.PanelStationLog>(), requiredStations),
+                p.CreatedAt))
+            .ToList();
         return Ok(items);
     }
 
@@ -449,5 +535,51 @@ public sealed class TraceController : ControllerBase
             updatedPanels = updated,
             requiredStationCount = requiredStations.Count,
         });
+    }
+
+    /// <summary>
+    /// 板級生產狀態推導：與工單查詢共用同一套 panel_station_log 規則。
+    /// </summary>
+    /// <remarks>
+    /// 為什麼這裡不能直接讀 panels.status：
+    /// - panels.status 是冗餘/快取欄位，歷史資料可能仍停在 in_progress；
+    /// - 若工單查詢用 station log 推導、而板號/批次查詢讀 panels.status，
+    ///   同一批板就會出現一邊 pass、一邊 in_progress 的矛盾。
+    /// </remarks>
+    private static string DerivePanelProductionStatus(
+        IReadOnlyList<Domain.Entities.PanelStationLog> stations,
+        IReadOnlyList<string> requiredStations)
+    {
+        var latestByStation = stations
+            .OrderByDescending(s => s.EnteredAt)
+            .GroupBy(s => s.StationCode, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+        var derivedStatus = "in_progress";
+        var hasFail = latestByStation.Values.Any(l =>
+            string.Equals(l.Result, "fail", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(l.Result, "scrap", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(l.Result, "ng", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(l.Result, "reject", StringComparison.OrdinalIgnoreCase));
+        if (hasFail)
+        {
+            derivedStatus = "fail";
+        }
+        else if (requiredStations.Count > 0)
+        {
+            var allPassed = requiredStations.All(stationCode =>
+            {
+                if (!latestByStation.TryGetValue(stationCode, out var row)) return false;
+                if (!row.ExitedAt.HasValue) return false;
+                return string.Equals(row.Result, "pass", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(row.Result, "ok", StringComparison.OrdinalIgnoreCase);
+            });
+            if (allPassed)
+            {
+                derivedStatus = "pass";
+            }
+        }
+
+        return derivedStatus;
     }
 }
