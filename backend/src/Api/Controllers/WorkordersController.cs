@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 namespace AOIOpsPlatform.Api.Controllers;
 
 /// <summary>
-/// Workorders API。
+/// NCR（不良單）API。
 /// </summary>
 /// <remarks>
 /// 為什麼這次刪掉 GroupJoin：
@@ -14,11 +14,11 @@ namespace AOIOpsPlatform.Api.Controllers;
 /// </remarks>
 [ApiController]
 [Route("api/[controller]")]
-public sealed class WorkordersController : ControllerBase
+public sealed class NcrsController : ControllerBase
 {
     private readonly AoiOpsDbContext _db;
 
-    public WorkordersController(AoiOpsDbContext db)
+    public NcrsController(AoiOpsDbContext db)
     {
         _db = db;
     }
@@ -26,9 +26,9 @@ public sealed class WorkordersController : ControllerBase
     // 為什麼 DTO 把 panel/tool/line/station/operator/severity 都拋出去：
     // - 前端工單管理頁要顯示「板、機台、產線、站、開單人、嚴重度」六個關聯欄位；
     // - workorders 表已自帶這些冗餘欄位，DTO 直接拋出，無 JOIN 成本。
-    public sealed record WorkorderListItemDto(
+    public sealed record NcrListItemDto(
         Guid Id,
-        string WorkorderNo,
+        string NcrNo,
         string? Priority,
         string? Status,
         string? SourceQueue,
@@ -44,19 +44,19 @@ public sealed class WorkordersController : ControllerBase
         string? DefectCode);
 
     [HttpGet]
-    public async Task<ActionResult<IReadOnlyList<WorkorderListItemDto>>> List(
+    public async Task<ActionResult<IReadOnlyList<NcrListItemDto>>> List(
         [FromQuery] int take = 100,
         CancellationToken cancellationToken = default)
     {
         take = Math.Clamp(take, 1, 500);
 
-        var items = await _db.Workorders
+        var items = await _db.Ncrs
             .AsNoTracking()
             .OrderByDescending(w => w.CreatedAt)
             .Take(take)
-            .Select(w => new WorkorderListItemDto(
+            .Select(w => new NcrListItemDto(
                 w.Id,
-                w.WorkorderNo,
+                w.NcrNo,
                 w.Priority,
                 w.Status,
                 w.SourceQueue,

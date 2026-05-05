@@ -41,7 +41,7 @@ public sealed class KafkaOptions
 /// </summary>
 /// <remarks>
 /// 為什麼把 queue 名稱直接寫在 options：
-/// - alert / workorder queue 的名稱是和 Python publisher 共同約定，
+/// - alert / ncr queue 的名稱是和 Python publisher 共同約定，
 ///   寫在 config 比寫在程式碼裡更不容易因 refactor 而走鐘。
 /// </remarks>
 public sealed class RabbitMqOptions
@@ -60,5 +60,5 @@ public sealed class RabbitMqOptions
     ///   保持單一事實來源，避免兩邊命名不對。
     /// </summary>
     public string QueueAlert { get; set; } = "alert";
-    public string QueueWorkorder { get; set; } = "workorder";
+    public string QueueNcr { get; set; } = "ncr";
 }

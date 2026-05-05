@@ -128,17 +128,17 @@
 | review_comment | text | |
 | reviewed_at | datetimeoffset | |
 
-### 10. workorders（工單）
-> 來源：RabbitMQ `workorder` queue → .NET `WorkorderRabbitWorker`。
+### 10. ncrs（不良單）
+> 來源：RabbitMQ `ncr` queue → .NET `NcrRabbitWorker`。
 
 | 欄位 | 類型 | 說明 |
 |------|------|------|
 | id | uniqueidentifier PK | |
 | lot_id | uniqueidentifier FK → lots | nullable |
-| workorder_no | varchar | 唯一工單號（例：WO-20260422-1234） |
+| ncr_no | varchar | 唯一不良單號（例：NCR-20260505-1234） |
 | priority | varchar | normal / urgent |
 | status | varchar | pending / in_progress / done |
-| source_queue | varchar | 固定為 'workorder' |
+| source_queue | varchar | 固定為 'ncr' |
 | created_at | datetimeoffset | |
 
 ### 11. material_lots（物料批號，W08 新增）
@@ -221,7 +221,7 @@ lots ──────┬──────────────> wafers ─
                                                  │
                                                  └──────> defect_reviews
 
-workorders ────> lots（lot_id，nullable）
+ncrs ────> lots（lot_id，nullable）
 
 (deprecated)
 documents ────> document_chunks
@@ -265,10 +265,10 @@ copilot_queries ──> alarms / defects（nullable）
 }
 ```
 
-消費者：Python `kafka-rabbitmq-publisher` → RabbitMQ exchange → `alert` / `workorder` queue
+消費者：Python `kafka-rabbitmq-publisher` → RabbitMQ exchange → `alert` / `ncr` queue
 
 ### RabbitMQ queue: alert
 - 消費者：**.NET `AlarmRabbitWorker`** → 寫 `alarms` + 推 SignalR `/hubs/alarm`
 
-### RabbitMQ queue: workorder
-- 消費者：**.NET `WorkorderRabbitWorker`** → 寫 `workorders` + 推 SignalR `/hubs/workorder`
+### RabbitMQ queue: ncr
+- 消費者：**.NET `NcrRabbitWorker`** → 寫 `ncrs` + 推 SignalR `/hubs/ncr`

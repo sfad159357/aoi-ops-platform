@@ -32,6 +32,7 @@ public sealed class AoiOpsDbContext : DbContext
 
     public DbSet<Tool> Tools => Set<Tool>();
     public DbSet<Recipe> Recipes => Set<Recipe>();
+    public DbSet<ProductionWorkOrder> ProductionWorkOrders => Set<ProductionWorkOrder>();
     public DbSet<Lot> Lots => Set<Lot>();
     public DbSet<Panel> Panels => Set<Panel>();
     public DbSet<ProcessRun> ProcessRuns => Set<ProcessRun>();
@@ -42,7 +43,7 @@ public sealed class AoiOpsDbContext : DbContext
     public DbSet<Document> Documents => Set<Document>();
     public DbSet<DocumentChunk> DocumentChunks => Set<DocumentChunk>();
     public DbSet<CopilotQuery> CopilotQueries => Set<CopilotQuery>();
-    public DbSet<Workorder> Workorders => Set<Workorder>();
+    public DbSet<Ncr> Ncrs => Set<Ncr>();
     public DbSet<MaterialLot> MaterialLots => Set<MaterialLot>();
     public DbSet<PanelMaterialUsage> PanelMaterialUsages => Set<PanelMaterialUsage>();
     public DbSet<PanelStationLog> PanelStationLogs => Set<PanelStationLog>();
@@ -66,7 +67,7 @@ public sealed class AoiOpsDbContext : DbContext
     }
 
     /// <summary>
-    /// 設定主檔（lines / stations / parameters / tools / recipes / lots）。
+    /// 設定主檔（lines / stations / parameters / tools / recipes / production_work_order / lots）。
     /// </summary>
     /// <remarks>
     /// 為什麼把 master 與 transaction 分開設定：
@@ -169,11 +170,27 @@ public sealed class AoiOpsDbContext : DbContext
             b.HasIndex(x => x.RecipeCode).IsUnique();
         });
 
+        modelBuilder.Entity<ProductionWorkOrder>(b =>
+        {
+            b.ToTable("production_work_order");
+            b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql(defaultGuidSql);
+            b.Property(x => x.WorkOrderNo).HasColumnName("work_order_no").HasMaxLength(100).IsRequired();
+            b.Property(x => x.ProductCode).HasColumnName("product_code").HasMaxLength(100);
+            b.Property(x => x.PlannedQuantity).HasColumnName("planned_quantity");
+            b.Property(x => x.Status).HasColumnName("status").HasMaxLength(50);
+            b.Property(x => x.PlannedStartAt).HasColumnName("planned_start_at");
+            b.Property(x => x.PlannedEndAt).HasColumnName("planned_end_at");
+            b.Property(x => x.CreatedAt).HasColumnName("created_at");
+            b.HasIndex(x => x.WorkOrderNo).IsUnique();
+        });
+
         modelBuilder.Entity<Lot>(b =>
         {
             b.ToTable("lots");
             b.HasKey(x => x.Id);
             b.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql(defaultGuidSql);
+            b.Property(x => x.ProductionWorkOrderId).HasColumnName("production_work_order_id");
             b.Property(x => x.LotNo).HasColumnName("lot_no").HasMaxLength(100).IsRequired();
             b.Property(x => x.ProductCode).HasColumnName("product_code").HasMaxLength(100);
             b.Property(x => x.Quantity).HasColumnName("quantity");
@@ -182,6 +199,14 @@ public sealed class AoiOpsDbContext : DbContext
             b.Property(x => x.Status).HasColumnName("status").HasMaxLength(50);
             b.Property(x => x.CreatedAt).HasColumnName("created_at");
             b.HasIndex(x => x.LotNo).IsUnique();
+
+            // 為什麼 lot→production_work_order 設 SetNull：
+            // - demo/重置資料時可能會先刪製令主檔；lot 仍可作為歷史流轉單位保留，
+            //   並以 lot_no / product_code 等欄位繼續查詢。
+            b.HasOne(x => x.ProductionWorkOrder)
+                .WithMany(pwo => pwo.Lots)
+                .HasForeignKey(x => x.ProductionWorkOrderId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
     }
 
@@ -407,9 +432,9 @@ public sealed class AoiOpsDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
-        modelBuilder.Entity<Workorder>(b =>
+        modelBuilder.Entity<Ncr>(b =>
         {
-            b.ToTable("workorders");
+            b.ToTable("ncrs");
             b.HasKey(x => x.Id);
             b.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql(defaultGuidSql);
             b.Property(x => x.LotId).HasColumnName("lot_id");
@@ -424,24 +449,24 @@ public sealed class AoiOpsDbContext : DbContext
             b.Property(x => x.OperatorName).HasColumnName("operator_name").HasMaxLength(200);
             b.Property(x => x.Severity).HasColumnName("severity").HasMaxLength(50);
             b.Property(x => x.DefectCode).HasColumnName("defect_code").HasMaxLength(100);
-            b.Property(x => x.WorkorderNo).HasColumnName("workorder_no").HasMaxLength(100).IsRequired();
+            b.Property(x => x.NcrNo).HasColumnName("ncr_no").HasMaxLength(100).IsRequired();
             b.Property(x => x.Priority).HasColumnName("priority").HasMaxLength(50);
             b.Property(x => x.Status).HasColumnName("status").HasMaxLength(50);
             b.Property(x => x.SourceQueue).HasColumnName("source_queue").HasMaxLength(50).IsRequired();
             b.Property(x => x.CreatedAt).HasColumnName("created_at");
-            b.HasIndex(x => x.WorkorderNo).IsUnique();
+            b.HasIndex(x => x.NcrNo).IsUnique();
             b.HasIndex(x => x.LotNo);
             b.HasIndex(x => x.PanelNo);
             b.HasIndex(x => x.ToolCode);
             b.HasIndex(x => x.StationCode);
             b.HasIndex(x => x.OperatorCode);
 
-            // 為什麼 workorder→lot 設 SetNull、panel/tool 設 NoAction：
-            // - SQL Server 不允許 multiple cascade paths（lot→panel cascade + workorders→lot SetNull + workorders→panel SetNull 會被視為多路徑風險）；
-            // - 工單是事件 + 責任歸檔，母表被刪除時不該抹掉責任歷史，
+            // 為什麼 ncr→lot 設 SetNull、panel/tool 設 NoAction：
+            // - SQL Server 不允許 multiple cascade paths（lot→panel cascade + ncrs→lot SetNull + ncrs→panel SetNull 會被視為多路徑風險）；
+            // - 不良單是事件 + 責任歸檔，母表被刪除時不該抹掉責任歷史，
             //   panel/tool 改 NoAction：刪母表時 DB 會擋下，由應用層自行處理；冗餘字串欄位仍保留供顯示。
             b.HasOne(x => x.Lot)
-                .WithMany(l => l.Workorders)
+                .WithMany(l => l.Ncrs)
                 .HasForeignKey(x => x.LotId)
                 .OnDelete(DeleteBehavior.SetNull);
             b.HasOne(x => x.Tool)

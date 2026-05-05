@@ -377,8 +377,13 @@ function StationCard({
   label: string
   log: StationLog | null
 }) {
-  const result = (log?.result ?? '').toLowerCase()
-  const palette = resultPalette(result, !!log)
+  // 為什麼需要把 result 做正規化再上色：
+  // - 物料追溯查詢要求「照 SQL 真實資料呈現」，所以 badge 文字要顯示 DB 原始 result；
+  // - 但現場/歷史資料可能出現同義值（例如 OK/NG/SCRAP），若直接用字串比對會被誤判成未知狀態（藍色）。
+  // - 取捨：顯示不改動原始值（可對照 SQL），僅把「上色邏輯」統一映射到 pass/fail/warn/skip。
+  const rawResult = log?.result
+  const normalized = normalizeStationResult(rawResult)
+  const palette = resultPalette(normalized, !!log)
   return (
     <div
       style={{
@@ -407,7 +412,7 @@ function StationCard({
             textTransform: 'uppercase',
           }}
         >
-          {log?.result ?? '無資料'}
+          {log ? (rawResult ?? '—') : '無資料'}
         </span>
       </div>
       <div style={{ fontSize: 14, fontWeight: 600, color: '#e5e7eb' }}>{label}</div>
@@ -473,6 +478,21 @@ function RelatedTable({ rows, onSelect }: { rows: RelatedPanel[]; onSelect: (pan
       </tbody>
     </table>
   )
+}
+
+function normalizeStationResult(raw: string | null | undefined): string {
+  const v = (raw ?? '').trim().toLowerCase()
+  if (!v) return ''
+
+  // 為什麼要涵蓋 ok/ng/scrap：
+  // - 有些來源（或歷史資料）用 OK/NG 表示站別結果；
+  // - TraceController/DB 也可能出現 scrap（報廢）等結果，業務上應視為 fail。
+  if (v === 'pass' || v === 'ok') return 'pass'
+  if (v === 'fail' || v === 'ng' || v === 'reject' || v === 'scrap') return 'fail'
+  if (v === 'warn' || v === 'warning') return 'warn'
+  if (v === 'skip' || v === 'bypass') return 'skip'
+
+  return v
 }
 
 function InfoCell({ label, value, mono }: { label: string; value: string; mono?: boolean }) {

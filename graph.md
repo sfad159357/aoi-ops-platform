@@ -53,7 +53,7 @@ flowchart TB
     REST["REST API<br/>/api/lots /alarms /workorders<br/>/api/trace/* /api/meta/profile"]
     HUB_SPC["SignalR /hubs/spc"]
     HUB_AL["SignalR /hubs/alarm"]
-    HUB_WO["SignalR /hubs/workorder"]
+    HUB_WO["SignalR /hubs/ncr"]
   end
 
   subgraph SPCSVC["📊 Python spc-service（FastAPI 8001）"]
@@ -186,7 +186,7 @@ sequenceDiagram
   Q->>W: deliver（manual ack）
   W->>DB: INSERT alarms / workorders
   W->>H: PushAsync(payload)
-  H-->>FE: /hubs/alarm 或 /hubs/workorder
+  H-->>FE: /hubs/alarm 或 /hubs/ncr
   FE->>FE: 列表頂端新增一行（高亮 1.5s）
   W-->>Q: ack
 ```

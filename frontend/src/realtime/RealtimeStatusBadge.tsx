@@ -11,7 +11,7 @@ import { createHubConnection, safeStopHub } from './signalr'
 
 type Props = {
   /** 用哪個 hub 當「總連線狀態」指標，預設 spc */
-  hub?: 'spc' | 'alarm' | 'workorder'
+  hub?: 'spc' | 'alarm' | 'ncr'
 }
 
 /**

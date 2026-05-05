@@ -51,12 +51,12 @@ public sealed class AlarmHubBroker : IAlarmHubBroker
         => _hub.Clients.All.SendAsync("alarm", payload, cancellationToken);
 }
 
-/// <summary>SignalR 版的工單 broker。</summary>
-public sealed class WorkorderHubBroker : IWorkorderHubBroker
+/// <summary>SignalR 版的不良單（NCR）broker。</summary>
+public sealed class NcrHubBroker : INcrHubBroker
 {
-    private readonly IHubContext<WorkorderHub> _hub;
-    public WorkorderHubBroker(IHubContext<WorkorderHub> hub) => _hub = hub;
+    private readonly IHubContext<NcrHub> _hub;
+    public NcrHubBroker(IHubContext<NcrHub> hub) => _hub = hub;
 
-    public Task PushWorkorderAsync(object payload, CancellationToken cancellationToken)
-        => _hub.Clients.All.SendAsync("workorder", payload, cancellationToken);
+    public Task PushNcrAsync(object payload, CancellationToken cancellationToken)
+        => _hub.Clients.All.SendAsync("ncr", payload, cancellationToken);
 }

@@ -278,7 +278,7 @@ services:
       - KAFKA_CONSUMER_GROUP=aoiops-rabbitmq-publisher
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
       - RABBITMQ_QUEUE_ALERT=alert
-      - RABBITMQ_QUEUE_WORKORDER=workorder
+      - RABBITMQ_QUEUE_NCR=ncr
     depends_on:
       kafka:
         condition: service_healthy
@@ -289,7 +289,7 @@ services:
       python -m app"
 
   # legacy：Python rabbitmq → DB sink。
-  # W07 起 .NET RabbitMqConsumerHostedService（AlarmRabbitWorker / WorkorderRabbitWorker）已接手；
+  # W07 起 .NET RabbitMqConsumerHostedService（AlarmRabbitWorker / NcrRabbitWorker）已接手；
   # 兩邊同時消費同一個 queue 會互搶訊息，所以這個服務改成 profile=legacy（預設不啟動）。
   # 仍要跑舊路線時：docker compose --profile legacy up rabbitmq-db-sink
   rabbitmq-db-sink:
@@ -302,7 +302,7 @@ services:
       - PYTHONUNBUFFERED=1
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
       - RABBITMQ_QUEUE_ALERT=alert
-      - RABBITMQ_QUEUE_WORKORDER=workorder
+      - RABBITMQ_QUEUE_NCR=ncr
       # legacy service：若未來要啟用，需另行確認 SQL Server schema/查詢相容性
       - DB_CONNECTION=Server=mssql,1433;Database=AOIOpsPlatform_MSSQL;User Id=sa;Password=${MSSQL_SA_PASSWORD:-Your_password123!};TrustServerCertificate=True;
     depends_on:

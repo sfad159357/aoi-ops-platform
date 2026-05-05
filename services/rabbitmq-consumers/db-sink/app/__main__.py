@@ -2,10 +2,10 @@
 RabbitMQ Consumers — DB Sink
 
 功能：
-- 監聽 RabbitMQ queue：`alert` 與 `workorder`
+- 監聽 RabbitMQ queue：`alert` 與 `ncr`
 - 將訊息落地到 PostgreSQL：
   - `alarms`（告警）
-  - `workorders`（工單）
+  - `ncrs`（不良單）
 
 注意（MVP 取捨）：
 - 這裡先用「至少可查詢」的欄位落地；更完整的狀態機（ack/close/assign）後續再加。
@@ -142,33 +142,33 @@ def _insert_alarm(cur: psycopg.Cursor, ev: dict) -> None:
     )
 
 
-def _insert_workorder(cur: psycopg.Cursor, ev: dict) -> None:
+def _insert_ncr(cur: psycopg.Cursor, ev: dict) -> None:
     lot_no = ev.get("lot_no")
     lot_id = _find_lot_id(cur, str(lot_no)) if lot_no else None
 
-    wo_id = str(uuid.uuid4())
+    ncr_id = str(uuid.uuid4())
     severity = str(ev.get("severity") or "low").lower()
     priority = "P1" if severity in ("high", "critical") else ("P2" if severity == "medium" else "P3")
 
-    # 為什麼 workorder_no 不是自增：事件流系統常需要可追溯的可讀識別碼；MVP 用 timestamp+random。
-    workorder_no = f"WO-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{str(wo_id)[:8]}"
+    # 為什麼 ncr_no 不是自增：事件流系統常需要可追溯的可讀識別碼；MVP 用 timestamp+random。
+    ncr_no = f"NCR-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{str(ncr_id)[:8]}"
 
     cur.execute(
         """
-        INSERT INTO workorders (
-            id, lot_id, workorder_no, priority, status, source_queue, created_at
+        INSERT INTO ncrs (
+            id, lot_id, ncr_no, priority, status, source_queue, created_at
         )
         VALUES (
             %s, %s, %s, %s, %s, %s, now()
         )
         """,
         (
-            wo_id,
+            ncr_id,
             lot_id,
-            workorder_no,
+            ncr_no,
             priority,
             "open",
-            "workorder",
+            "ncr",
         ),
     )
 
@@ -176,18 +176,18 @@ def _insert_workorder(cur: psycopg.Cursor, ev: dict) -> None:
 def main() -> None:
     amqp_url = _env("RABBITMQ_URL", "amqp://guest:guest@rabbitmq:5672/")
     queue_alert = _env("RABBITMQ_QUEUE_ALERT", "alert")
-    queue_workorder = _env("RABBITMQ_QUEUE_WORKORDER", "workorder")
+    queue_ncr = _env("RABBITMQ_QUEUE_NCR", "ncr")
 
     db_conn = _normalize_conninfo(_env("DB_CONNECTION"))
 
     print(f"[rabbitmq-db-sink] amqp_url={amqp_url}")
-    print(f"[rabbitmq-db-sink] queues: alert={queue_alert} workorder={queue_workorder}")
+    print(f"[rabbitmq-db-sink] queues: alert={queue_alert} ncr={queue_ncr}")
 
     params = pika.URLParameters(amqp_url)
     conn = pika.BlockingConnection(params)
     ch = conn.channel()
     ch.queue_declare(queue=queue_alert, durable=True)
-    ch.queue_declare(queue=queue_workorder, durable=True)
+    ch.queue_declare(queue=queue_ncr, durable=True)
 
     # 為什麼 prefetch：避免一次拉太多訊息進記憶體；同時提升公平分配（若未來 scale out）
     ch.basic_qos(prefetch_count=50)
@@ -202,7 +202,7 @@ def main() -> None:
                     if queue_name == queue_alert:
                         _insert_alarm(cur, ev)
                     else:
-                        _insert_workorder(cur, ev)
+                        _insert_ncr(cur, ev)
                 db.commit()
                 _ch.basic_ack(delivery_tag=method.delivery_tag)
             except Exception as e:
@@ -215,7 +215,7 @@ def main() -> None:
         return _cb
 
     ch.basic_consume(queue=queue_alert, on_message_callback=_handle(queue_alert), auto_ack=False)
-    ch.basic_consume(queue=queue_workorder, on_message_callback=_handle(queue_workorder), auto_ack=False)
+    ch.basic_consume(queue=queue_ncr, on_message_callback=_handle(queue_ncr), auto_ack=False)
 
     print("[rabbitmq-db-sink] consuming...")
     ch.start_consuming()

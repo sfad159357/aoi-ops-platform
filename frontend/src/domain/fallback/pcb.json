@@ -4,7 +4,7 @@
   "factory": { "name": "範例：景碩科技", "site": "石磊廠" },
   "entities": {
     "panel": { "table": "wafers", "labelZh": "板", "idPrefix": "ABF" },
-    "lot":   { "table": "lots",   "labelZh": "工單批次", "idPrefix": "WO" },
+    "lot":   { "table": "lots",   "labelZh": "批次", "idPrefix": "LOT" },
     "tool":  { "table": "tools",  "labelZh": "機台" }
   },
   "stations": [
@@ -30,7 +30,7 @@
   ],
   "menus": [
     { "id": "spc",   "labelZh": "品質監控" },
-    { "id": "wo",    "labelZh": "工單管理" },
+    { "id": "ncr",   "labelZh": "不良單" },
     { "id": "alarm", "labelZh": "異常記錄" },
     { "id": "trace", "labelZh": "物料追溯查詢" }
   ],
@@ -60,7 +60,7 @@
     "panel_singular": "板",
     "panel_plural": "板",
     "panel_id_label": "板號",
-    "lot_id_label": "工單號",
+    "lot_id_label": "批次號",
     "process_run_label": "生產紀錄"
   }
 }

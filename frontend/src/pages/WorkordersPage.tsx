@@ -1,8 +1,8 @@
-// WorkordersPage：工單管理頁。
+// NcrsPage：不良單（NCR）管理頁。
 //
 // 為什麼這頁要做：
-// - 4 大選單之一；對應 RabbitMQ workorder queue 落地的工單事件。
-// - 工程主管最常問「P1 工單還有沒有沒處理的、最近多了幾張」，列表型態即可。
+// - 4 大選單之一；對應 RabbitMQ ncr queue 落地的不良單事件。
+// - 工程主管最常問「P1 不良單還有沒有沒處理的、最近多了幾張」，列表型態即可。
 //
 // 為什麼樣式跟異常記錄頁幾乎一樣：
 // - 都是「列表 + 即時長新一行」的功能，UX 一致使用者最不容易迷路；
@@ -15,11 +15,11 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { HubConnectionState } from '@microsoft/signalr'
 import { useProfile } from '../domain/useProfile'
-import { useWorkorderStream, type WorkorderEvent } from '../realtime/useWorkorderStream'
+import { useNcrStream, type NcrEvent } from '../realtime/useNcrStream'
 
-type ApiWorkorder = {
+type ApiNcr = {
   id: string
-  workorderNo: string
+  ncrNo: string
   priority: string | null
   status: string | null
   sourceQueue: string | null
@@ -35,10 +35,10 @@ type ApiWorkorder = {
   defectCode: string | null
 }
 
-function toEvent(w: ApiWorkorder): WorkorderEvent {
+function toEvent(w: ApiNcr): NcrEvent {
   return {
     id: w.id,
-    workorderNo: w.workorderNo,
+    ncrNo: w.ncrNo,
     priority: w.priority,
     status: w.status,
     createdAt: w.createdAt,
@@ -54,9 +54,9 @@ function toEvent(w: ApiWorkorder): WorkorderEvent {
   }
 }
 
-export default function WorkordersPage() {
+export default function NcrsPage() {
   const { profile } = useProfile()
-  const [bootstrap, setBootstrap] = useState<WorkorderEvent[] | undefined>(undefined)
+  const [bootstrap, setBootstrap] = useState<NcrEvent[] | undefined>(undefined)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [dateFilter, setDateFilter] = useState<string>(() => todayYmd())
   const [priorityFilters, setPriorityFilters] = useState<string[]>([])
@@ -72,9 +72,9 @@ export default function WorkordersPage() {
     const ctrl = new AbortController()
     void (async () => {
       try {
-        const res = await fetch(`${baseUrl}/api/workorders?take=100`, { signal: ctrl.signal })
-        if (!res.ok) throw new Error(`workorders list failed: ${res.status}`)
-        const json = (await res.json()) as ApiWorkorder[]
+        const res = await fetch(`${baseUrl}/api/ncrs?take=100`, { signal: ctrl.signal })
+        if (!res.ok) throw new Error(`ncrs list failed: ${res.status}`)
+        const json = (await res.json()) as ApiNcr[]
         setBootstrap(json.map(toEvent))
       } catch (e) {
         if (e instanceof DOMException && e.name === 'AbortError') return
@@ -84,32 +84,32 @@ export default function WorkordersPage() {
     return () => ctrl.abort()
   }, [baseUrl])
 
-  const { workorders, connectionState } = useWorkorderStream({ bootstrap, maxItems: 200 })
+  const { ncrs, connectionState } = useNcrStream({ bootstrap, maxItems: 200 })
 
   // 為什麼把日期先切成獨立資料集：
   // - 讓後續多欄位篩選能與日期聯動，條件與選項都只針對同一天資料計算。
-  const dateScopedWorkorders = useMemo(() => {
-    if (!dateFilter) return workorders
-    return workorders.filter((w) => toYmd(w.createdAt) === dateFilter)
-  }, [workorders, dateFilter])
+  const dateScopedNcrs = useMemo(() => {
+    if (!dateFilter) return ncrs
+    return ncrs.filter((w) => toYmd(w.createdAt) === dateFilter)
+  }, [ncrs, dateFilter])
 
   // 為什麼選項依日期資料動態產生：
   // - 避免出現使用者當天資料不存在的值，降低空結果的困惑感。
   const priorityOptions = useMemo(
-    () => uniqueValues(dateScopedWorkorders, (w) => normalizeFilterValue(w.priority)),
-    [dateScopedWorkorders]
+    () => uniqueValues(dateScopedNcrs, (w) => normalizeFilterValue(w.priority)),
+    [dateScopedNcrs]
   )
   const lineOptions = useMemo(
-    () => uniqueValues(dateScopedWorkorders, (w) => normalizeFilterValue(w.lineCode)),
-    [dateScopedWorkorders]
+    () => uniqueValues(dateScopedNcrs, (w) => normalizeFilterValue(w.lineCode)),
+    [dateScopedNcrs]
   )
   const stationOptions = useMemo(
-    () => uniqueValues(dateScopedWorkorders, (w) => normalizeFilterValue(w.stationCode)),
-    [dateScopedWorkorders]
+    () => uniqueValues(dateScopedNcrs, (w) => normalizeFilterValue(w.stationCode)),
+    [dateScopedNcrs]
   )
   const toolOptions = useMemo(
-    () => uniqueValues(dateScopedWorkorders, (w) => normalizeFilterValue(w.toolCode)),
-    [dateScopedWorkorders]
+    () => uniqueValues(dateScopedNcrs, (w) => normalizeFilterValue(w.toolCode)),
+    [dateScopedNcrs]
   )
 
   // 為什麼日期切換要同步清理舊條件：
@@ -123,12 +123,12 @@ export default function WorkordersPage() {
 
   // 為什麼多條件使用 AND：
   // - 工單排查常見情境是「某日 + 某優先級 + 某產線/站別/機台」交集定位。
-  const filteredWorkorders = useMemo(() => {
+  const filteredNcrs = useMemo(() => {
     const prioritySet = new Set(priorityFilters)
     const lineSet = new Set(lineFilters)
     const stationSet = new Set(stationFilters)
     const toolSet = new Set(toolFilters)
-    return dateScopedWorkorders.filter((w) => {
+    return dateScopedNcrs.filter((w) => {
       const priority = normalizeFilterValue(w.priority)
       const line = normalizeFilterValue(w.lineCode)
       const station = normalizeFilterValue(w.stationCode)
@@ -140,17 +140,17 @@ export default function WorkordersPage() {
         (toolSet.size === 0 || toolSet.has(tool))
       )
     })
-  }, [dateScopedWorkorders, priorityFilters, lineFilters, stationFilters, toolFilters])
+  }, [dateScopedNcrs, priorityFilters, lineFilters, stationFilters, toolFilters])
 
   const grouped = useMemo(
-    () => groupByYmd(filteredWorkorders, (w) => w.createdAt),
-    [filteredWorkorders]
+    () => groupByYmd(filteredNcrs, (w) => w.createdAt),
+    [filteredNcrs]
   )
 
   const [recentlyAdded, setRecentlyAdded] = useState<Set<string>>(new Set())
   useEffect(() => {
-    if (workorders.length === 0) return
-    const newest = workorders[0]
+    if (ncrs.length === 0) return
+    const newest = ncrs[0]
     if (!newest) return
     setRecentlyAdded((prev) => {
       const next = new Set(prev)
@@ -165,17 +165,17 @@ export default function WorkordersPage() {
       })
     }, 1500)
     return () => clearTimeout(tid)
-  }, [workorders])
+  }, [ncrs])
 
   return (
     <div style={pageStyle}>
       <div style={headerRowStyle}>
         <div>
           <h1 style={{ margin: 0, fontSize: 18, fontWeight: 600 }}>
-            {profile.menus.find((m) => m.id === 'wo')?.labelZh ?? '工單管理'}
+            {profile.menus.find((m) => m.id === 'ncr')?.labelZh ?? '不良單'}
           </h1>
           <div style={{ color: '#6b7280', fontSize: 12, marginTop: 4 }}>
-            來源：RabbitMQ <code style={mono}>workorder</code> → SignalR <code style={mono}>/hubs/workorder</code>
+            來源：RabbitMQ <code style={mono}>ncr</code> → SignalR <code style={mono}>/hubs/ncr</code>
             <span style={{ marginLeft: 8 }}>SignalR {labelForState(connectionState)}</span>
           </div>
         </div>
@@ -200,7 +200,7 @@ export default function WorkordersPage() {
           >
             清除全部篩選
           </button>
-          <div style={{ color: '#9ca3af', fontSize: 12 }}>共 {filteredWorkorders.length} 筆</div>
+          <div style={{ color: '#9ca3af', fontSize: 12 }}>共 {filteredNcrs.length} 筆</div>
         </div>
       </div>
 
@@ -232,7 +232,7 @@ export default function WorkordersPage() {
       </div>
 
       {loadError && (
-        <div style={errorStyle}>歷史工單讀取失敗：{loadError}（仍會顯示 SignalR 推來的即時事件）</div>
+        <div style={errorStyle}>歷史不良單讀取失敗：{loadError}（仍會顯示 SignalR 推來的即時事件）</div>
       )}
 
       <div style={tableContainerStyle}>
@@ -240,7 +240,7 @@ export default function WorkordersPage() {
           <thead>
             <tr style={{ background: '#161b22', color: '#9ca3af', fontSize: 12 }}>
               <th style={thStyle}>建立時間</th>
-              <th style={thStyle}>工單編號</th>
+              <th style={thStyle}>不良單編號</th>
               <th style={thStyle}>優先級</th>
               <th style={thStyle}>狀態</th>
               <th style={thStyle}>產線</th>
@@ -275,7 +275,7 @@ export default function WorkordersPage() {
                     }}
                   >
                     <td style={tdMonoStyle}>{formatTime(w.createdAt)}</td>
-                    <td style={tdMonoStyle}>{w.workorderNo}</td>
+                    <td style={tdMonoStyle}>{w.ncrNo}</td>
                     <td style={tdStyle}>
                       <PriorityBadge priority={w.priority} />
                     </td>
@@ -291,10 +291,10 @@ export default function WorkordersPage() {
                 ))}
               </Fragment>
             ))}
-            {filteredWorkorders.length === 0 && (
+            {filteredNcrs.length === 0 && (
               <tr>
                 <td colSpan={11} style={{ ...tdStyle, textAlign: 'center', color: '#6b7280', padding: 24 }}>
-                  這一天沒有任何工單（或尚未收到即時事件）。觸發一次高嚴重度 defect 後即可看到 P1 工單。
+                  這一天沒有任何不良單（或尚未收到即時事件）。觸發一次高嚴重度 defect 後即可看到 P1 不良單。
                 </td>
               </tr>
             )}

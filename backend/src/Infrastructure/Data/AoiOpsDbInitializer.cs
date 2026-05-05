@@ -132,7 +132,7 @@ public static class AoiOpsDbInitializer
     }
 
     /// <summary>
-    /// 種一份 ABF 高階製程的豐富 demo 資料：員工 / 多機台 / 多批次 / 多板 / 6 站歷程 / 物料 / SPC 量測 / 歷史 alarms+workorders+defects。
+    /// 種一份 ABF 高階製程的豐富 demo 資料：員工 / 多機台 / 多批次 / 多板 / 6 站歷程 / 物料 / SPC 量測 / 歷史 alarms+ncrs+defects。
     /// </summary>
     /// <remarks>
     /// 為什麼一次種完整鏈路 + 大量歷史：
@@ -156,7 +156,7 @@ public static class AoiOpsDbInitializer
 
         // ─── 0. operators 員工池 ──────────────────────────────────────
         // 為什麼把人員寫到 DB：
-        // - 雖然子表（alarms/workorders/defects）只冗餘字串，但有獨立 operators 主檔
+        // - 雖然子表（alarms/ncrs/defects）只冗餘字串，但有獨立 operators 主檔
         //   能讓報表「依負責人聚合」、未來補 RBAC 時也有 anchor。
         var operatorsToSeed = new (string Code, string Name, string Role, string Shift)[]
         {
@@ -416,14 +416,14 @@ public static class AoiOpsDbInitializer
         db.PanelStationLogs.AddRange(stationLogs);
         db.ProcessRuns.AddRange(processRuns);
 
-        // ─── 10. 歷史 defects + alarms + workorders：選 25 張板，每張隨機 1 個缺陷 ───
+        // ─── 10. 歷史 defects + alarms + ncrs：選 25 張板，每張隨機 1 個缺陷 ───
         // 為什麼選 25 張板：與 ingestion 邏輯一致（每 12 筆 inspection 才一筆 defect），
         //   給足 4 頁面 demo 用的歷史量；後續即時 stream 還會繼續累加。
         var defectTypes = new[] { "短路", "斷路", "錫橋", "空焊", "偏移", "缺件", "異物", "極性反向" };
         var severityWeights = new[] { ("low", 0.5), ("medium", 0.35), ("high", 0.15) };
         var alarms = new List<Alarm>();
         var defects = new List<Defect>();
-        var workorders = new List<Workorder>();
+        var ncrs = new List<Ncr>();
         var defectPanels = panels.OrderBy(_ => rng.Next()).Take(25).ToList();
         var historyAnchor = now.AddHours(-3);
         for (var i = 0; i < defectPanels.Count; i++)
@@ -486,10 +486,10 @@ public static class AoiOpsDbInitializer
                 Source = "rabbitmq",
             });
 
-            // 為什麼 high/medium 才開工單：對應 RabbitMQ publisher 的路由規則，避免低嚴重度淹沒工單頁面。
+            // 為什麼 high/medium 才開不良單：對應 RabbitMQ publisher 的路由規則，避免低嚴重度淹沒不良單頁面。
             if (sev == "high" || sev == "medium")
             {
-                workorders.Add(new Workorder
+                ncrs.Add(new Ncr
                 {
                     Id = Guid.NewGuid(),
                     LotId = lot.Id,
@@ -504,17 +504,17 @@ public static class AoiOpsDbInitializer
                     OperatorName = op.OperatorName,
                     Severity = sev,
                     DefectCode = defect.DefectCode,
-                    WorkorderNo = $"WO-{detectedAt:yyyyMMddHHmmss}-{i:000}",
+                    NcrNo = $"NCR-{detectedAt:yyyyMMddHHmmss}-{i:000}",
                     Priority = sev == "high" ? "P1" : "P2",
                     Status = "open",
-                    SourceQueue = "workorder",
+                    SourceQueue = "ncr",
                     CreatedAt = detectedAt.AddSeconds(2),
                 });
             }
         }
         db.Defects.AddRange(defects);
         db.Alarms.AddRange(alarms);
-        db.Workorders.AddRange(workorders);
+        db.Ncrs.AddRange(ncrs);
 
         // ─── 11. SPC 量測：所有機台 × 3 個常用參數 × 8 個觀測點 ───
         // 為什麼每組 8 點：滿足 SPC「規則 2：連續 9 點同側」需要的點數，未來灌入 1 點就能觸發；
@@ -561,9 +561,9 @@ public static class AoiOpsDbInitializer
         await db.SaveChangesAsync(cancellationToken);
         logger.LogInformation(
             "ABF demo seed completed (rich). operators={Operators} tools={Tools} lots={Lots} panels={Panels} " +
-            "stations={Stations} alarms={Alarms} workorders={WO} defects={Defects} spc={Spc}",
+            "stations={Stations} alarms={Alarms} ncrs={Ncrs} defects={Defects} spc={Spc}",
             operators.Count, tools.Count, lots.Count, panels.Count,
-            stationCodes.Length, alarms.Count, workorders.Count, defects.Count, spcPoints.Count);
+            stationCodes.Length, alarms.Count, ncrs.Count, defects.Count, spcPoints.Count);
     }
 
     /// <summary>依權重挑選一個 string 值；用於 severity 隨機分佈。</summary>

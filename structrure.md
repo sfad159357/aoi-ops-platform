@@ -35,14 +35,14 @@ aoi-ops-platform/
       Api/                      ← REST + SignalR 進入點
         Controllers/
           AlarmsController.cs       GET /api/alarms
-          WorkordersController.cs   GET /api/workorders
+          WorkordersController.cs   GET /api/ncrs
           TraceController.cs        GET /api/trace/panel/{panelNo}, /api/trace/panels/recent
           MetaController.cs         GET /api/meta/profile
           LotsController.cs / DefectsController.cs / HealthController.cs ...
         Hubs/                       ← SignalR Hubs（W04 / W07）
           SpcHub.cs                 ← /hubs/spc，支援 JoinGroup(line, parameter)
           AlarmHub.cs               ← /hubs/alarm
-          WorkorderHub.cs           ← /hubs/workorder
+          NcrHub.cs                 ← /hubs/ncr
         Realtime/
           SpcHubBroker.cs           ← ISpcHubBroker / IAlarmHubBroker / IWorkorderHubBroker 實作
         Program.cs                  ← DI / Hub 註冊 / hosted services / CORS
@@ -75,7 +75,7 @@ aoi-ops-platform/
           RabbitMqConsumerHostedService.cs
         Workers/                    ← W07
           AlarmRabbitWorker.cs      ← RabbitMQ alert  → DB + /hubs/alarm
-          WorkorderRabbitWorker.cs  ← RabbitMQ workorder → DB + /hubs/workorder
+          WorkorderRabbitWorker.cs  ← RabbitMQ ncr → DB + /hubs/ncr
     tests/
       AOIOpsPlatform.Api.Tests/
         SpcRulesEngineTests.cs      ← W05 八大規則 / Cpk 單元測試

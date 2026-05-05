@@ -2,7 +2,7 @@ import { useState } from 'react'
 import './App.css'
 import SpcDashboard from './pages/SpcDashboard'
 import AlarmsPage from './pages/AlarmsPage'
-import WorkordersPage from './pages/WorkordersPage'
+import NcrsPage from './pages/WorkordersPage'
 import TraceabilityPage from './pages/TraceabilityPage'
 import RealtimeStatusBadge from './realtime/RealtimeStatusBadge'
 import { useProfile } from './domain/useProfile'
@@ -12,7 +12,7 @@ import { useProfile } from './domain/useProfile'
 // 為什麼把 alarm / wo / trace 都放進來：
 // - 對齊 4 大選單：SPC / 工單 / 異常 / 物料追溯；
 //   仍維持單一 state，沒有 router 的學習成本。
-type PageId = 'health' | 'spc' | 'alarm' | 'wo' | 'trace'
+type PageId = 'health' | 'spc' | 'alarm' | 'ncr' | 'trace'
 
 /**
  * App（前端導覽外殼）
@@ -47,10 +47,10 @@ function App() {
         </span>
         {([
           { id: 'health', label: '首頁' },
-          // 為什麼把 SPC / Alarm / Workorder 的標籤從 profile 取：
+          // 為什麼把 SPC / Alarm / NCR 的標籤從 profile 取：
           // - profile.menus 由 domain profile JSON 提供，
           //   切到 semiconductor profile 時，UI 文案會自動跟著換。
-          { id: 'wo',     label: profile.menus.find((m) => m.id === 'wo')?.labelZh ?? '工單管理' },
+          { id: 'ncr',    label: profile.menus.find((m) => m.id === 'ncr')?.labelZh ?? '不良單' },
           { id: 'trace',  label: profile.menus.find((m) => m.id === 'trace')?.labelZh ?? '物料追溯查詢' },
           // 為什麼 SPC 也改成讀 profile：
           // - 使用者要求避免前端硬寫標籤；切換不同 domain profile 時，
@@ -94,9 +94,9 @@ function App() {
           <AlarmsPage />
         </div>
       )}
-      {page === 'wo' && (
+      {page === 'ncr' && (
         <div style={{ background: '#0d1117', minHeight: 'calc(100vh - 48px)' }}>
-          <WorkordersPage />
+          <NcrsPage />
         </div>
       )}
       {page === 'trace' && (

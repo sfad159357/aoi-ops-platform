@@ -1,15 +1,15 @@
-// WorkorderRabbitWorker：消費 RabbitMQ workorder queue，落 PostgreSQL workorders 表並推 SignalR。
+// NcrRabbitWorker：消費 RabbitMQ ncr queue，落 SQL ncrs 表並推 SignalR。
 //
 // 為什麼放在 Infrastructure 層：
 // - 與 AlarmRabbitWorker 同樣需要 EF Core DbContext，屬於基礎設施實作。
 //
 // 為什麼跟 Alarm 分兩個 handler：
-// - workorder 與 alarm 寫入的 table 不同、嚴重度與優先級對應規則也不同；
+// - ncr 與 alarm 寫入的 table 不同、嚴重度與優先級對應規則也不同；
 //   分開後 logic 各管各的，邊界清楚。
 // - 未來若想依不同 queue 名稱動態擴充，只要再加 handler。
 //
 // 解決什麼問題：
-// - 工單建立即時推播給前端；不需要重新整理頁面就能看到「新工單」動畫。
+// - 不良單建立即時推播給前端；不需要重新整理頁面就能看到「新單」動畫。
 
 using System.Diagnostics;
 using System.Text.Json;
@@ -25,27 +25,27 @@ using Microsoft.Extensions.Logging;
 namespace AOIOpsPlatform.Infrastructure.Workers;
 
 /// <summary>
-/// 把 RabbitMQ workorder 訊息落地到 workorders 表並透過 SignalR 推播給前端。
+/// 把 RabbitMQ ncr 訊息落地到 ncrs 表並透過 SignalR 推播給前端。
 /// </summary>
-public sealed class WorkorderRabbitWorker : IRabbitMessageHandler
+public sealed class NcrRabbitWorker : IRabbitMessageHandler
 {
     private readonly AoiOpsDbContext _db;
-    private readonly IWorkorderHubBroker _hubBroker;
+    private readonly INcrHubBroker _hubBroker;
     private readonly IRealtimeMetrics _metrics;
-    private readonly ILogger<WorkorderRabbitWorker> _logger;
+    private readonly ILogger<NcrRabbitWorker> _logger;
 
-    public WorkorderRabbitWorker(
+    public NcrRabbitWorker(
         AoiOpsDbContext db,
-        IWorkorderHubBroker hubBroker,
+        INcrHubBroker hubBroker,
         IRealtimeMetrics metrics,
         IConfiguration configuration,
-        ILogger<WorkorderRabbitWorker> logger)
+        ILogger<NcrRabbitWorker> logger)
     {
         _db = db;
         _hubBroker = hubBroker;
         _metrics = metrics;
         _logger = logger;
-        Queue = configuration["Messaging:RabbitMq:QueueWorkorder"] ?? "workorder";
+        Queue = configuration["Messaging:RabbitMq:QueueNcr"] ?? "ncr";
     }
 
     public string Queue { get; }
@@ -59,7 +59,7 @@ public sealed class WorkorderRabbitWorker : IRabbitMessageHandler
         }
         catch (JsonException ex)
         {
-            _logger.LogWarning(ex, "workorder payload 解析失敗：{Body}", Truncate(body));
+            _logger.LogWarning(ex, "ncr payload 解析失敗：{Body}", Truncate(body));
             return false;
         }
         if (evt is null) return false;
@@ -72,7 +72,7 @@ public sealed class WorkorderRabbitWorker : IRabbitMessageHandler
         }
 
         // 為什麼順手解 panel / tool id：
-        // - workorder 列表頁要顯示 panel_no / tool_code / station_code / operator，
+        // - ncr 列表頁要顯示 panel_no / tool_code / station_code / operator，
         //   讓 FK 與冗餘字串都填齊，前端就能直接 select 顯示。
         Guid? panelId = null;
         var panelNo = evt.PanelNo;
@@ -93,8 +93,8 @@ public sealed class WorkorderRabbitWorker : IRabbitMessageHandler
             toolId = tool?.Id;
         }
 
-        // 為什麼這樣產 workorder_no：
-        // - 對應 Python db-sink 既有規則：WO-yyyymmddhhmmss-{8字 random}；
+        // 為什麼這樣產 ncr_no：
+        // - 對應事件流常見的「可讀識別碼」需求：時間戳 + random；
         //   讓兩邊產出可讀識別碼一致，運維 / 比對 log 時不會混淆。
         var severity = (evt.Severity ?? "low").ToLowerInvariant();
         var priority = severity switch
@@ -107,7 +107,7 @@ public sealed class WorkorderRabbitWorker : IRabbitMessageHandler
         // 為什麼把全套關聯欄位都寫進去：
         // - 工單列表 API 不再需要 LEFT JOIN；
         // - 即使原始母表被歸檔，工單仍保留當時快照供稽核。
-        var wo = new Workorder
+        var ncr = new Ncr
         {
             Id = Guid.NewGuid(),
             LotId = lotId,
@@ -122,41 +122,41 @@ public sealed class WorkorderRabbitWorker : IRabbitMessageHandler
             OperatorName = evt.OperatorName,
             Severity = evt.Severity,
             DefectCode = evt.DefectCode,
-            WorkorderNo = $"WO-{DateTime.UtcNow:yyyyMMddHHmmss}-{Guid.NewGuid().ToString()[..8]}",
+            NcrNo = $"NCR-{DateTime.UtcNow:yyyyMMddHHmmss}-{Guid.NewGuid().ToString()[..8]}",
             Priority = priority,
             Status = "open",
-            SourceQueue = "workorder",
+            SourceQueue = "ncr",
             CreatedAt = DateTimeOffset.UtcNow,
         };
 
-        _db.Workorders.Add(wo);
+        _db.Ncrs.Add(ncr);
         await _db.SaveChangesAsync(cancellationToken);
 
         // 為什麼從這裡才開始量延遲：理由同 AlarmRabbitWorker，純粹計 SignalR push 段落。
         var sw = Stopwatch.StartNew();
-        await _hubBroker.PushWorkorderAsync(new
+        await _hubBroker.PushNcrAsync(new
         {
-            id = wo.Id,
-            workorderNo = wo.WorkorderNo,
-            priority = wo.Priority,
-            status = wo.Status,
-            createdAt = wo.CreatedAt,
-            lotNo = wo.LotNo,
-            panelNo = wo.PanelNo,
-            toolCode = wo.ToolCode,
-            lineCode = wo.LineCode,
-            stationCode = wo.StationCode,
-            operatorCode = wo.OperatorCode,
-            operatorName = wo.OperatorName,
-            severity = wo.Severity,
-            defectCode = wo.DefectCode,
+            id = ncr.Id,
+            ncrNo = ncr.NcrNo,
+            priority = ncr.Priority,
+            status = ncr.Status,
+            createdAt = ncr.CreatedAt,
+            lotNo = ncr.LotNo,
+            panelNo = ncr.PanelNo,
+            toolCode = ncr.ToolCode,
+            lineCode = ncr.LineCode,
+            stationCode = ncr.StationCode,
+            operatorCode = ncr.OperatorCode,
+            operatorName = ncr.OperatorName,
+            severity = ncr.Severity,
+            defectCode = ncr.DefectCode,
         }, cancellationToken);
         sw.Stop();
         _metrics.RecordWorkorder(sw.Elapsed.TotalMilliseconds);
 
         _logger.LogInformation(
-            "Workorder 已建立並推送：no={No} priority={Priority} lot={Lot} panel={Panel} tool={Tool} op={Op} pushMs={PushMs}",
-            wo.WorkorderNo, wo.Priority, wo.LotNo, wo.PanelNo, wo.ToolCode, wo.OperatorCode, sw.Elapsed.TotalMilliseconds);
+            "NCR 已建立並推送：no={No} priority={Priority} lot={Lot} panel={Panel} tool={Tool} op={Op} pushMs={PushMs}",
+            ncr.NcrNo, ncr.Priority, ncr.LotNo, ncr.PanelNo, ncr.ToolCode, ncr.OperatorCode, sw.Elapsed.TotalMilliseconds);
         return true;
     }
 

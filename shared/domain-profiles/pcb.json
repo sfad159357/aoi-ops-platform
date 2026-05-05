@@ -13,8 +13,8 @@
     },
     "lot": {
       "table": "lots",
-      "label_zh": "工單批次",
-      "id_prefix": "WO"
+      "label_zh": "批次",
+      "id_prefix": "LOT"
     },
     "tool": {
       "table": "tools",
@@ -44,7 +44,7 @@
   ],
   "menus": [
     { "id": "spc",   "label_zh": "品質監控" },
-    { "id": "wo",    "label_zh": "工單管理" },
+    { "id": "ncr",   "label_zh": "不良單" },
     { "id": "alarm", "label_zh": "異常記錄" },
     { "id": "trace", "label_zh": "物料追溯查詢" }
   ],
@@ -74,7 +74,7 @@
     "panel_singular":   "板",
     "panel_plural":     "板",
     "panel_id_label":   "板號",
-    "lot_id_label":     "工單號",
+    "lot_id_label":     "批次號",
     "process_run_label": "生產紀錄"
   }
 }

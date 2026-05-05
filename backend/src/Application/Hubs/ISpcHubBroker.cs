@@ -1,4 +1,4 @@
-// ISpcHubBroker / IAlarmHubBroker / IWorkorderHubBroker：
+// ISpcHubBroker / IAlarmHubBroker / INcrHubBroker：
 // Application 層用來推 SignalR 訊息的抽象介面。
 //
 // 為什麼要在 Application 自己定義一組 broker：
@@ -33,8 +33,8 @@ public interface IAlarmHubBroker
     Task PushAlarmAsync(object payload, CancellationToken cancellationToken);
 }
 
-/// <summary>工單管理 Hub 推播抽象。</summary>
-public interface IWorkorderHubBroker
+/// <summary>不良單（NCR）管理頁用的 Hub 推播抽象。</summary>
+public interface INcrHubBroker
 {
-    Task PushWorkorderAsync(object payload, CancellationToken cancellationToken);
+    Task PushNcrAsync(object payload, CancellationToken cancellationToken);
 }

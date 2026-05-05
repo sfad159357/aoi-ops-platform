@@ -1,18 +1,24 @@
 namespace AOIOpsPlatform.Domain.Entities;
 
 /// <summary>
-/// Lot（批次 / 工單）資料。
+/// Lot（批次）資料。
 /// 目的：讓使用者能以 lot_no 作為主要查詢入口，
-/// 並串接 panels / process_runs / defects / workorders 形成可追溯的資料鏈。
+/// 並串接 panels / process_runs / defects / ncrs 形成可追溯的資料鏈。
 /// </summary>
 /// <remarks>
 /// 為什麼加 navigation collections：
-/// - controllers 之前要手動 LEFT JOIN 才能拿到對應 panels 與 workorders；
+/// - controllers 之前要手動 LEFT JOIN 才能拿到對應 panels 與 ncrs；
 ///   有 navigation 之後可以 .Include 一次取出，或讓子表透過 LotNo 冗餘欄位直接顯示，零 mapping。
+///
+/// 為什麼把「生產工單」拆成另一張表（ProductionWorkOrder）：
+/// - 真實 MES 通常是「生產工單（製令）→ 拆批次/lot → 過站/追溯」；
+///   Lot 本身只代表流轉單位，不應承擔生產指令的語意，避免「工單」用詞混淆。
 /// </remarks>
 public sealed class Lot
 {
     public Guid Id { get; set; }
+
+    public Guid? ProductionWorkOrderId { get; set; }
 
     public string LotNo { get; set; } = null!;
 
@@ -28,8 +34,9 @@ public sealed class Lot
 
     public DateTimeOffset CreatedAt { get; set; }
 
+    public ProductionWorkOrder? ProductionWorkOrder { get; set; }
     public ICollection<Panel> Panels { get; set; } = new List<Panel>();
     public ICollection<ProcessRun> ProcessRuns { get; set; } = new List<ProcessRun>();
     public ICollection<Defect> Defects { get; set; } = new List<Defect>();
-    public ICollection<Workorder> Workorders { get; set; } = new List<Workorder>();
+    public ICollection<Ncr> Ncrs { get; set; } = new List<Ncr>();
 }

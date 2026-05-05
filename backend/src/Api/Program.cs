@@ -113,7 +113,7 @@ try
     // - IHubContext 本身是 singleton；包裝它的 broker 沒狀態，singleton 最省資源。
     builder.Services.AddSingleton<ISpcHubBroker, SpcHubBroker>();
     builder.Services.AddSingleton<IAlarmHubBroker, AlarmHubBroker>();
-    builder.Services.AddSingleton<IWorkorderHubBroker, WorkorderHubBroker>();
+    builder.Services.AddSingleton<INcrHubBroker, NcrHubBroker>();
 
     // W11：RealtimeMetrics 也是 singleton，跟 broker 同一個生命週期。
     // 為什麼同時用兩個 service descriptor：MetricsController 直接需要實作型別來取 Snapshot()，
@@ -144,7 +144,7 @@ try
     // - RabbitMqConsumerHostedService 每筆訊息會 CreateScope() 解析 handler，
     //   保證 DbContext 在訊息生命週期內獨立、用完即釋放。
     builder.Services.AddScoped<IRabbitMessageHandler, AlarmRabbitWorker>();
-    builder.Services.AddScoped<IRabbitMessageHandler, WorkorderRabbitWorker>();
+    builder.Services.AddScoped<IRabbitMessageHandler, NcrRabbitWorker>();
 
     // 為什麼 hosted service 用 AddHostedService：
     // - .NET 會自動在啟動時 StartAsync、停止時 StopAsync，不用我們手動管 thread。
@@ -193,7 +193,7 @@ try
     // - 與 /api/* 路徑明顯區分，nginx / gateway 之後可以針對 WebSocket 設不同 timeout / sticky。
     app.MapHub<SpcHub>("/hubs/spc");
     app.MapHub<AlarmHub>("/hubs/alarm");
-    app.MapHub<WorkorderHub>("/hubs/workorder");
+    app.MapHub<NcrHub>("/hubs/ncr");
 
     // 為什麼加 lifecycle log：
     // - 目前症狀是「程式有跑、DB/Kafka worker 有 log，但 HTTP 沒有 listen」；

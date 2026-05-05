@@ -38,7 +38,7 @@
 | Python `kafka-rabbitmq-publisher` | Kafka `aoi.defect.event` | RabbitMQ alert / workorder |
 | .NET `SpcRealtimeWorker` | Kafka `aoi.inspection.raw` | SignalR `/hubs/spc`（即時 SPC 點 + 違規）|
 | .NET `AlarmRabbitWorker` | RabbitMQ `alert` | SQL Server `alarms` + SignalR `/hubs/alarm` |
-| .NET `WorkorderRabbitWorker` | RabbitMQ `workorder` | SQL Server `workorders` + SignalR `/hubs/workorder` |
+| .NET `NcrRabbitWorker` | RabbitMQ `ncr` | SQL Server `ncrs` + SignalR `/hubs/ncr` |
 
 > .NET 是「唯一」對前端 push 的入口；Python workers 只負責落地（時序 / 業務寫入），不直接面對前端，避免 CORS 雙頭管理。
 
@@ -49,8 +49,8 @@
 
 ### 5) Core Backend（C# / ASP.NET Core 8）
 
-- REST API：`/api/lots`、`/api/alarms`、`/api/workorders`、`/api/trace/panel/{panelNo}`、`/api/meta/profile` …
-- SignalR Hub：`/hubs/spc`、`/hubs/alarm`、`/hubs/workorder`、`/hubs/trace`
+- REST API：`/api/lots`、`/api/alarms`、`/api/ncrs`、`/api/trace/panel/{panelNo}`、`/api/meta/profile` …
+- SignalR Hub：`/hubs/spc`、`/hubs/alarm`、`/hubs/ncr`
 - BackgroundService：
   - `KafkaConsumerHostedService`（含 `SpcRealtimeWorker`）
   - `RabbitMqConsumerHostedService`（含 alarm / workorder workers）
@@ -88,8 +88,8 @@ Docker Compose 一鍵拉起：SQL Server / InfluxDB / Kafka / RabbitMQ / 後端 
 ### 2) 工單管理
 
 - RabbitMQ `workorder` queue → .NET `WorkorderRabbitWorker` → SQL Server `workorders`
-- SignalR `/hubs/workorder` → 前端即時長新一行（高亮 1.5 秒）
-- REST：`GET /api/workorders?take=100` 預載歷史
+- SignalR `/hubs/ncr` → 前端即時長新一行（高亮 1.5 秒）
+- REST：`GET /api/ncrs?take=100` 預載歷史
 
 ### 3) 異常記錄
 

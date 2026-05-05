@@ -1,10 +1,10 @@
 """
-Kafka Consumer Group B — RabbitMQ Publisher（alert / workorder）
+Kafka Consumer Group B — RabbitMQ Publisher（alert / ncr）
 
 目標：
 - 消費 Kafka `aoi.defect.event`
 - 依 severity 路由到 RabbitMQ：
-  - severity=high → alert + workorder
+  - severity=high → alert + ncr
   - severity=medium → alert
   - severity=low →（MVP）只寫 alert（方便 demo 事件流）
 
@@ -38,7 +38,7 @@ def main() -> None:
 
     amqp_url = _env("RABBITMQ_URL", "amqp://guest:guest@rabbitmq:5672/")
     queue_alert = _env("RABBITMQ_QUEUE_ALERT", "alert")
-    queue_workorder = _env("RABBITMQ_QUEUE_WORKORDER", "workorder")
+    queue_ncr = _env("RABBITMQ_QUEUE_NCR", "ncr")
 
     consumer = KafkaConsumer(
         topic,
@@ -51,7 +51,7 @@ def main() -> None:
     )
 
     print(f"[rabbitmq-publisher] bootstrap={bootstrap} topic={topic} group={group_id}")
-    print(f"[rabbitmq-publisher] amqp_url={amqp_url} alert={queue_alert} workorder={queue_workorder}")
+    print(f"[rabbitmq-publisher] amqp_url={amqp_url} alert={queue_alert} ncr={queue_ncr}")
 
     wrote = 0
     published_batches = 0
@@ -61,7 +61,7 @@ def main() -> None:
             conn = pika.BlockingConnection(params)
             ch = conn.channel()
             ch.queue_declare(queue=queue_alert, durable=True)
-            ch.queue_declare(queue=queue_workorder, durable=True)
+            ch.queue_declare(queue=queue_ncr, durable=True)
 
             while True:
                 records = consumer.poll(timeout_ms=1000, max_records=200)
@@ -86,7 +86,7 @@ def main() -> None:
                         if severity in ("high", "critical"):
                             ch.basic_publish(
                                 exchange="",
-                                routing_key=queue_workorder,
+                                routing_key=queue_ncr,
                                 body=body,
                                 properties=pika.BasicProperties(delivery_mode=2),
                             )

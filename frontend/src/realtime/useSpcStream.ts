@@ -3,7 +3,7 @@
 // 為什麼做成 hook：
 // - 元件層只關心「現在最新一批點是什麼」，不該去管 SignalR 連線生命週期；
 //   hook 把連線、加入 group、收訊息、cleanup 都包起來。
-// - 同樣模式之後可複製成 useAlarmStream / useWorkorderStream，重用骨架。
+// - 同樣模式之後可複製成 useAlarmStream / useNcrStream，重用骨架。
 //
 // 解決什麼問題：
 // - 前端從「打 REST 取 demo」變成「被 push 真實資料」的最小切入點。
