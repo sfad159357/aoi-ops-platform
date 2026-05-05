@@ -91,10 +91,13 @@ public sealed class SpcRealtimeWorker : IKafkaMessageHandler
         //   Worker 直接吃比 InferLineCodeFromTool 推斷穩定；推斷只當 fallback。
         var lineCode = !string.IsNullOrEmpty(evt.LineCode) ? evt.LineCode : InferLineCodeFromTool(evt.ToolCode);
         // 為什麼 panelNo 優先用 evt.PanelNo：
-        // - ingestion 已經組好（lot_no-wafer_no），直接吃避免兩端格式不一致。
+        // - ingestion 已經組好且已正規化為 PN-*；直接吃避免兩端格式不一致。
         var panelNo = !string.IsNullOrEmpty(evt.PanelNo)
             ? evt.PanelNo
-            : (string.IsNullOrEmpty(evt.LotNo) ? null : $"{evt.LotNo}-{evt.WaferNo}");
+            : (string.IsNullOrEmpty(evt.LotNo)
+                ? null
+                : $"{NormalizePanelBaseFromLotNo(evt.LotNo)}-{evt.WaferNo}");
+        panelNo = NormalizeDoubleDash(panelNo);
 
         foreach (var parameter in _profile.Current.Parameters)
         {
@@ -168,6 +171,34 @@ public sealed class SpcRealtimeWorker : IKafkaMessageHandler
         }
 
         _ = key;
+    }
+
+    private static string NormalizePanelBaseFromLotNo(string lotNo)
+    {
+        // 為什麼正規化：
+        // - lot_no（批次）可能是 LOT-*，也可能是歷史 WO-*；板號必須統一為 PN-*，避免語意混淆。
+        // - 同時壓平 PN-- 的雙 dash，避免前端出現 PN--2026... 這種可讀性差的板號。
+        var s = (lotNo ?? string.Empty).Trim();
+        if (s.StartsWith("PN-", StringComparison.OrdinalIgnoreCase))
+        {
+            return NormalizeDoubleDash(s) ?? "PN-UNKNOWN";
+        }
+        if (s.StartsWith("WO-", StringComparison.OrdinalIgnoreCase) || s.StartsWith("LOT-", StringComparison.OrdinalIgnoreCase))
+        {
+            return NormalizeDoubleDash("PN-" + s[3..]) ?? "PN-UNKNOWN";
+        }
+        return NormalizeDoubleDash($"PN-{s}") ?? "PN-UNKNOWN";
+    }
+
+    private static string? NormalizeDoubleDash(string? panelNo)
+    {
+        if (string.IsNullOrWhiteSpace(panelNo)) return panelNo;
+        var s = panelNo.Trim();
+        while (s.StartsWith("PN--", StringComparison.OrdinalIgnoreCase))
+        {
+            s = "PN-" + s[4..];
+        }
+        return s;
     }
 
     /// <summary>

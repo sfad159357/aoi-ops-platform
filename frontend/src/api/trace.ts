@@ -14,6 +14,8 @@ export type PanelInfo = {
   panelNo: string
   lotNo: string
   status: string | null
+  productionWorkOrderId: string | null
+  workOrderNo: string | null
   createdAt: string
 }
 
@@ -60,6 +62,8 @@ export type PanelTrace = {
 export type MaterialTrackingItem = {
   panelNo: string
   lotNo: string
+  productionWorkOrderId: string | null
+  workOrderNo: string | null
   materialLotNo: string
   materialType: string
   materialName: string | null
@@ -80,6 +84,18 @@ export async function fetchPanelTrace(panelNo: string, signal?: AbortSignal): Pr
 export async function fetchRecentPanels(take = 20, signal?: AbortSignal): Promise<RelatedPanel[]> {
   const res = await fetch(`${baseUrl}/api/trace/panels/recent?take=${take}`, { signal })
   if (!res.ok) throw new Error(`recent panels failed: ${res.status}`)
+  return (await res.json()) as RelatedPanel[]
+}
+
+export async function fetchPanelsByLot(lotNo: string, take = 100, signal?: AbortSignal): Promise<RelatedPanel[]> {
+  const res = await fetch(
+    `${baseUrl}/api/trace/panels/by-lot?lotNo=${encodeURIComponent(lotNo)}&take=${take}`,
+    { signal },
+  )
+  if (!res.ok) {
+    const text = await safeText(res)
+    throw new Error(`panels by lot failed: ${res.status} ${text}`)
+  }
   return (await res.json()) as RelatedPanel[]
 }
 

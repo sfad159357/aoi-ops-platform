@@ -226,12 +226,38 @@ public sealed class AlarmRabbitWorker : IRabbitMessageHandler
     private async Task<(Guid? id, string? panelNo)> EnsurePanelAsync(
         Guid? lotId, string? lotNo, string? payloadPanelNo, int? waferNo, CancellationToken cancellationToken)
     {
+        static string NormalizePanelBaseFromLotNo(string rawLotNo)
+        {
+            // 為什麼正規化：
+            // - lot_no（批次）常以 LOT-* 命名，板號必須統一為 PN-*；
+            // - 避免曾出現的雙 dash（PN--...）在 fallback 組字串時再次擴散。
+            var s = (rawLotNo ?? string.Empty).Trim();
+            if (s.StartsWith("PN-", StringComparison.OrdinalIgnoreCase))
+            {
+                while (s.StartsWith("PN--", StringComparison.OrdinalIgnoreCase))
+                {
+                    s = "PN-" + s[4..];
+                }
+                return s;
+            }
+            if (s.StartsWith("WO-", StringComparison.OrdinalIgnoreCase) || s.StartsWith("LOT-", StringComparison.OrdinalIgnoreCase))
+            {
+                s = "PN-" + s[3..];
+                while (s.StartsWith("PN--", StringComparison.OrdinalIgnoreCase))
+                {
+                    s = "PN-" + s[4..];
+                }
+                return s;
+            }
+            return $"PN-{s}";
+        }
+
         // 為什麼 panelNo fallback：
         // - ingestion 已組好 panel_no，但偶爾舊版 producer 沒帶；
         // - 用 lot_no + wafer_no 組合與 panels 表寫入邏輯對齊。
         var panelNo = !string.IsNullOrWhiteSpace(payloadPanelNo)
             ? payloadPanelNo
-            : (string.IsNullOrWhiteSpace(lotNo) ? null : $"{lotNo}-{waferNo ?? 0}");
+            : (string.IsNullOrWhiteSpace(lotNo) ? null : $"{NormalizePanelBaseFromLotNo(lotNo)}-{waferNo ?? 0}");
         if (lotId is null || string.IsNullOrWhiteSpace(panelNo)) return (null, panelNo);
 
         var panel = await _db.Panels.FirstOrDefaultAsync(p => p.PanelNo == panelNo, cancellationToken);

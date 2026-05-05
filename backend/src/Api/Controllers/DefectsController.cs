@@ -36,6 +36,8 @@ public sealed class DefectsController : ControllerBase
         string ToolCode,
         Guid LotId,
         string LotNo,
+        Guid? ProductionWorkOrderId,
+        string? WorkOrderNo,
         Guid PanelId,
         string PanelNo,
         // 為什麼補 line/station/operator：
@@ -63,6 +65,8 @@ public sealed class DefectsController : ControllerBase
         string? ToolName,
         Guid LotId,
         string LotNo,
+        Guid? ProductionWorkOrderId,
+        string? WorkOrderNo,
         Guid PanelId,
         string PanelNo,
         Guid? ProcessRunId,
@@ -76,11 +80,16 @@ public sealed class DefectsController : ControllerBase
         // 為什麼直接 .Select：
         // - defect 已自帶 tool_code/lot_no/panel_no，省掉 JOIN 與多表 round-trip；
         // - 排序仍照 detected_at desc 給前端最新優先。
-        var items = await _db.Defects
-            .AsNoTracking()
-            .OrderByDescending(d => d.DetectedAt)
-            .Take(200)
-            .Select(d => new DefectListItemDto(
+        // 為什麼 defects 也要關聯回 production_work_order：
+        // - 缺陷追溯常從 defect_code 或 panel_no 進來，但管理層需要快速彙整到工單層級；
+        // - lot_id 是穩定 FK，可直接 join lots → production_work_order，避免靠字串推測。
+        var items = await (
+            from d in _db.Defects.AsNoTracking()
+            join l in _db.Lots.AsNoTracking() on d.LotId equals l.Id
+            join pwo in _db.ProductionWorkOrders.AsNoTracking() on l.ProductionWorkOrderId equals pwo.Id into pj
+            from wo in pj.DefaultIfEmpty()
+            orderby d.DetectedAt descending
+            select new DefectListItemDto(
                 d.Id,
                 d.DefectCode,
                 d.DefectType,
@@ -92,6 +101,8 @@ public sealed class DefectsController : ControllerBase
                 d.ToolCode,
                 d.LotId,
                 d.LotNo,
+                l.ProductionWorkOrderId,
+                wo != null ? wo.WorkOrderNo : null,
                 d.PanelId,
                 d.PanelNo,
                 d.LineCode,
@@ -101,6 +112,7 @@ public sealed class DefectsController : ControllerBase
                 d.XCoord,
                 d.YCoord
             ))
+            .Take(200)
             .ToListAsync(cancellationToken);
 
         return Ok(items);
@@ -117,31 +129,18 @@ public sealed class DefectsController : ControllerBase
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<DefectDetailDto>> Get(Guid id, CancellationToken cancellationToken)
     {
-        var item = await _db.Defects
-            .AsNoTracking()
-            .Where(d => d.Id == id)
-            .Include(d => d.Tool)
-            .Select(d => new DefectDetailDto(
-                d.Id,
-                d.DefectCode,
-                d.DefectType,
-                d.Severity,
-                d.XCoord,
-                d.YCoord,
-                d.DetectedAt,
-                d.IsFalseAlarm,
-                d.KafkaEventId,
-                d.ToolId,
-                d.ToolCode,
-                d.Tool != null ? d.Tool.ToolName : null,
-                d.LotId,
-                d.LotNo,
-                d.PanelId,
-                d.PanelNo,
-                d.ProcessRunId,
-                Array.Empty<object>(),
-                Array.Empty<object>()
-            ))
+        var item = await (
+            from d in _db.Defects.AsNoTracking()
+            where d.Id == id
+            join l in _db.Lots.AsNoTracking() on d.LotId equals l.Id
+            join pwo in _db.ProductionWorkOrders.AsNoTracking() on l.ProductionWorkOrderId equals pwo.Id into pj
+            from wo in pj.DefaultIfEmpty()
+            select new
+            {
+                Defect = d,
+                Lot = l,
+                WorkOrderNo = wo != null ? wo.WorkOrderNo : null,
+            })
             .FirstOrDefaultAsync(cancellationToken);
 
         if (item is null)
@@ -149,6 +148,36 @@ public sealed class DefectsController : ControllerBase
             return NotFound(new { message = "defect not found", id });
         }
 
-        return Ok(item);
+        // 為什麼 detail 要額外查 toolName：
+        // - ToolName 沒冗餘在 defects；這裡保持最小變更，僅在 detail 再查一次 tools。
+        var toolName = await _db.Tools
+            .AsNoTracking()
+            .Where(t => t.Id == item.Defect.ToolId)
+            .Select(t => t.ToolName)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return Ok(new DefectDetailDto(
+            item.Defect.Id,
+            item.Defect.DefectCode,
+            item.Defect.DefectType,
+            item.Defect.Severity,
+            item.Defect.XCoord,
+            item.Defect.YCoord,
+            item.Defect.DetectedAt,
+            item.Defect.IsFalseAlarm,
+            item.Defect.KafkaEventId,
+            item.Defect.ToolId,
+            item.Defect.ToolCode,
+            toolName,
+            item.Defect.LotId,
+            item.Defect.LotNo,
+            item.Lot.ProductionWorkOrderId,
+            item.WorkOrderNo,
+            item.Defect.PanelId,
+            item.Defect.PanelNo,
+            item.Defect.ProcessRunId,
+            Array.Empty<object>(),
+            Array.Empty<object>()
+        ));
     }
 }

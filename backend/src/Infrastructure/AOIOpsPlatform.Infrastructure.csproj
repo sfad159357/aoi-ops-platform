@@ -14,13 +14,12 @@
     <!-- Microsoft.EntityFrameworkCore 8.0.13 是 EF Core 8 的最新安全修補版本（存在於 NuGet）-->
     <!-- Npgsql 8.0.11 是 8.x 系列的最新版本（8.0.13 不存在，會被 NuGet 跳升到 9.x 造成衝突）-->
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.13" />
-    <!-- 為什麼 Infrastructure 也加 SqlServer provider：讓 DbContext 的 model 設定與 initializer 在測試/工具中也能切換 -->
+    <!-- SQL Server provider：專案唯一主資料庫 -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="8.0.13" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="8.0.1" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
     <PackageReference Include="Microsoft.Extensions.Options" Version="8.0.2" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="8.0.0" />
-    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.11" />
     <!-- W04 新增：Kafka / RabbitMQ 用 client SDK -->
     <!-- 為什麼選 Confluent.Kafka 2.x：與 Apache Kafka 3.x broker 相容，且是 .NET 圈最常用的 Kafka client -->
     <!-- 為什麼選 RabbitMQ.Client 6.x：6.x 是 .NET 8 上最穩定的 LTS 版本，避免與 7.x 預覽 API 變動 -->

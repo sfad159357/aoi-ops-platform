@@ -25,6 +25,35 @@ namespace AOIOpsPlatform.Infrastructure.Data;
 /// </remarks>
 public static class AoiOpsDbInitializer
 {
+    private static string NormalizePanelBaseFromLotNo(string lotNo)
+    {
+        // 為什麼要做這個正規化：
+        // - lot_no 是批次（LOT-*），work order 是製令（WO-*），兩者都不應該直接出現在「板號」前綴；
+        //   板號在系統內統一使用 PN-*，避免追溯查詢與列表頁誤解。
+        // - 既有資料曾出現 lot_no 帶雙 dash（例如 LOT--2026...）導致 panel_no 變成 PN--2026...；
+        //   此處把雙 dash 一併壓平，確保板號只有一個 dash。
+        var s = (lotNo ?? string.Empty).Trim();
+        if (s.StartsWith("PN-", StringComparison.OrdinalIgnoreCase))
+        {
+            while (s.StartsWith("PN--", StringComparison.OrdinalIgnoreCase))
+            {
+                s = "PN-" + s[4..];
+            }
+            return s;
+        }
+        if (s.StartsWith("WO-", StringComparison.OrdinalIgnoreCase) || s.StartsWith("LOT-", StringComparison.OrdinalIgnoreCase))
+        {
+            s = "PN-" + s[3..];
+            while (s.StartsWith("PN--", StringComparison.OrdinalIgnoreCase))
+            {
+                s = "PN-" + s[4..];
+            }
+            return s;
+        }
+        // 保底：未知格式仍包 PN-，避免 seed 產生混前綴板號
+        return $"PN-{s}";
+    }
+
     public static async Task InitializeAsync(IServiceProvider services, CancellationToken cancellationToken = default)
     {
         using var scope = services.CreateScope();
@@ -140,7 +169,7 @@ public static class AoiOpsDbInitializer
     ///   並且各欄位（產線、機台、站別、批次、板號、人員、時間）都有明顯差異與關聯，才看得出 MES 落地價值。
     /// - 即時資料則由 ingestion 持續灌入，與 seed 共存。
     ///
-    /// 為什麼 panel_no 用「lot_no-序號」格式：
+    /// 為什麼 panel_no 用「PN- + lot_no + 序號」格式：
     /// - 與 ingestion 端 _resolve_panel_no 完全一致，這樣 producer 即使再寫一筆 (lot, wafer) 進來，
     ///   _get_or_create_panel_id 會命中既有 panel，不會重複塞。
     /// </remarks>
@@ -197,17 +226,22 @@ public static class AoiOpsDbInitializer
         var lines = await db.Lines.ToListAsync(cancellationToken);
         var smtLineA = lines.FirstOrDefault(l => l.LineCode.Equals("SMT-A", StringComparison.OrdinalIgnoreCase));
         var smtLineB = lines.FirstOrDefault(l => l.LineCode.Equals("SMT-B", StringComparison.OrdinalIgnoreCase));
+        var aoiLineA = lines.FirstOrDefault(l => l.LineCode.Equals("AOI-A", StringComparison.OrdinalIgnoreCase));
         var defaultLine = lines.FirstOrDefault();
         smtLineA ??= defaultLine;
         smtLineB ??= defaultLine;
+        aoiLineA ??= defaultLine;
 
         // ─── 2. tools 機台：與 ingestion mapping 對齊（SMT-A 線跑完整 6 站，SMT-B 線跑簡化 2 站） ───
+        // 為什麼 AOI 類機台獨立掛到 AOI-A：
+        // - 使用者希望「AOI 線 A」在平面圖下能看到機台，不是空線；
+        // - 真實工廠也常有獨立 AOI 檢測區/線別（AOI Station 集中），因此 demo 以 AOI-A 呈現更直觀。
         var toolDefs = new (string Code, string Name, string Type, string Station, Line? Line)[]
         {
             ("SPI-A01", "SPI Station A01", "SPI", "SPI", smtLineA),
             ("SMT-A01", "SMT Mounter A01", "SMT", "SMT", smtLineA),
             ("REFLOW-A01", "Reflow Oven A01", "REFLOW", "REFLOW", smtLineA),
-            ("AOI-A01", "AOI Inspector A01", "AOI", "AOI", smtLineA),
+            ("AOI-A01", "AOI Inspector A01", "AOI", "AOI", aoiLineA),
             ("ICT-A01", "ICT Tester A01", "ICT", "ICT", smtLineA),
             ("FQC-A01", "FQC Station A01", "FQC", "FQC", smtLineA),
             ("SMT-B01", "SMT Mounter B01", "SMT", "SMT", smtLineB),
@@ -241,24 +275,60 @@ public static class AoiOpsDbInitializer
         };
         db.Recipes.Add(recipe);
 
-        // ─── 4. lots 工單批次：8 張 lot，狀態混合 ─────────────────────
-        // 為什麼 8 張：3 in_progress + 3 completed + 2 queued，
-        //   涵蓋工單管理頁的 P1/P2/P3 工單與 lifecycle 不同階段。
-        var lotStatuses = new[] { "in_progress", "in_progress", "in_progress", "completed", "completed", "completed", "queued", "queued" };
-        var lots = Enumerable.Range(1, 8).Select(i => new Lot
+        // ─── 4. production_work_order：10 張生產工單（供「工單查詢」頁展示） ─────────────
+        // 為什麼要在 seed 裡先長出 production_work_order：
+        // - 讓使用者可以以「生產工單」作為核心主體查詢進度（lots→panels→logs），
+        //   而不是把 lot_no 誤認成製令。
+        // - demo 階段先用固定規則產號，讓搜尋（模糊查詢）與列表排序可預期。
+        var pwoStatuses = new[] { "in_progress", "in_progress", "released", "released", "planned", "planned", "completed", "completed", "cancelled", "planned" };
+        var pws = Enumerable.Range(1, 10).Select(i => new ProductionWorkOrder
         {
             Id = Guid.NewGuid(),
-            LotNo = $"WO-{now:yyyyMMdd}-{i:000}",
+            WorkOrderNo = $"WO-{now:yyyyMMdd}-{i:0000}",
+            LineCode = i % 2 == 0 ? "SMT-A" : "SMT-B",
             ProductCode = "ABF-A",
-            Quantity = 25,
-            StartTime = now.AddHours(-i * 1.5),
-            EndTime = lotStatuses[i - 1] == "completed" ? now.AddHours(-i * 1.5 + 4) : (DateTimeOffset?)null,
-            Status = lotStatuses[i - 1],
-            CreatedAt = now.AddHours(-i * 1.5),
+            PlannedQuantity = 25 * 2,
+            Status = pwoStatuses[i - 1],
+            PlannedStartAt = now.AddHours(-i * 4),
+            PlannedEndAt = now.AddHours(-i * 4 + 8),
+            CreatedAt = now.AddHours(-i * 4),
         }).ToList();
+        db.ProductionWorkOrders.AddRange(pws);
+
+        // ─── 5. lots 批次：每張工單 2 個 lot（共 20 lot） ─────────────────────
+        // 為什麼每工單 2 個 lot：
+        // - 模擬「製令拆批」的常見情境：同一製令分兩個批次在不同時間投線。
+        // - 讓工單頁面能展示「lots 進度不一致」與 panel station log 的彙整效果。
+        var lots = new List<Lot>();
+        foreach (var (pwo, idx) in pws.Select((x, i) => (x, i)))
+        {
+            for (var k = 1; k <= 2; k++)
+            {
+                var createdAt = pwo.CreatedAt.AddMinutes(k * 10);
+                var status = pwo.Status switch
+                {
+                    "completed" => "completed",
+                    "cancelled" => "cancelled",
+                    "planned" => "queued",
+                    _ => "in_progress",
+                };
+                lots.Add(new Lot
+                {
+                    Id = Guid.NewGuid(),
+                    ProductionWorkOrderId = pwo.Id,
+                    LotNo = $"LOT-{now:yyyyMMdd}-{idx + 1:000}-{k:00}",
+                    ProductCode = pwo.ProductCode,
+                    Quantity = 25,
+                    StartTime = status == "in_progress" || status == "completed" ? createdAt : (DateTimeOffset?)null,
+                    EndTime = status == "completed" ? createdAt.AddHours(4) : (DateTimeOffset?)null,
+                    Status = status,
+                    CreatedAt = createdAt,
+                });
+            }
+        }
         db.Lots.AddRange(lots);
 
-        // ─── 5. panels：每 lot 10 板，總 80 板 ─────────────────────────
+        // ─── 6. panels：每 lot 10 板 ──────────────────────────────────
         // 為什麼一個 lot 10 板：剛好對應 ingestion 端 random.randint(1, 25) 中常見的 1-10 區間，
         //   ingestion 即使再灌新事件，也容易命中既有 panel（不會無限長新板）。
         const int panelsPerLot = 10;
@@ -272,7 +342,9 @@ public static class AoiOpsDbInitializer
                     Id = Guid.NewGuid(),
                     LotId = lot.Id,
                     LotNo = lot.LotNo,
-                    PanelNo = $"{lot.LotNo}-{idx}",
+                    // 為什麼 panel_no 一律用 PO 前綴：
+                    // - WO/MO 是生產工單、LOT 是批次；板號不應混用這些前綴，避免追溯頁與工單頁語意混淆。
+                    PanelNo = $"{NormalizePanelBaseFromLotNo(lot.LotNo)}-{idx}",
                     Status = lot.Status == "completed" ? "pass" : "in_progress",
                     CreatedAt = lot.CreatedAt.AddSeconds(idx),
                 });

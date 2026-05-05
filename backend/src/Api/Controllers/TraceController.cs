@@ -35,6 +35,8 @@ public sealed class TraceController : ControllerBase
         string PanelNo,
         string LotNo,
         string? Status,
+        Guid? ProductionWorkOrderId,
+        string? WorkOrderNo,
         DateTimeOffset CreatedAt);
 
     public sealed record StationLogDto(
@@ -76,6 +78,8 @@ public sealed class TraceController : ControllerBase
     public sealed record MaterialTrackingItemDto(
         string PanelNo,
         string LotNo,
+        Guid? ProductionWorkOrderId,
+        string? WorkOrderNo,
         string MaterialLotNo,
         string MaterialType,
         string? MaterialName,
@@ -106,6 +110,22 @@ public sealed class TraceController : ControllerBase
             return NotFound(new { error = $"panel {panelNo} not found" });
         }
 
+        // 為什麼 trace API 也要帶工單號：
+        // - 物料追溯常用 panel/lot 當入口，但管理上需要一眼看到「屬於哪張製令/工單」；
+        // - 單一真相是 lots.production_work_order_id → production_work_order.work_order_no。
+        var lotRow = await _db.Lots
+            .AsNoTracking()
+            .Where(l => l.Id == panel.LotId)
+            .Select(l => new { l.ProductionWorkOrderId })
+            .FirstOrDefaultAsync(cancellationToken);
+        var pwoId = lotRow?.ProductionWorkOrderId;
+        var workOrderNo = pwoId.HasValue
+            ? await _db.ProductionWorkOrders.AsNoTracking()
+                .Where(p => p.Id == pwoId.Value)
+                .Select(p => p.WorkOrderNo)
+                .FirstOrDefaultAsync(cancellationToken)
+            : null;
+
         var profile = _profileService.Current;
         var stationLookup = profile.Stations.ToDictionary(s => s.Code, s => s, StringComparer.OrdinalIgnoreCase);
 
@@ -113,6 +133,46 @@ public sealed class TraceController : ControllerBase
             .Where(x => x.PanelId == panel.Id)
             .OrderBy(x => x.EnteredAt)
             .ToListAsync(cancellationToken);
+
+        // 為什麼 Panel 狀態要以 panel_station_log 推導（單一狀態真相）：
+        // - panels.status 是快取/冗餘欄位，可能因歷史資料或異常流程沒即時回寫而落後；
+        // - 使用者希望畫面狀態與站別時間軸同一套事實來源，避免「時間軸顯示 fail 但狀態仍 pass/in_progress」。
+        //
+        // 取捨：
+        // - 這裡只針對單板追溯 API 直接推導狀態；列表頁可仍用 panels.status 做快速查詢（由 ingestion/backfill 保持同步）。
+        var requiredStations = await _db.Stations
+            .AsNoTracking()
+            .OrderBy(s => s.Seq)
+            .Select(s => s.StationCode)
+            .ToListAsync(cancellationToken);
+        var latestByStation = stations
+            .OrderByDescending(s => s.EnteredAt)
+            .GroupBy(s => s.StationCode, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        var derivedStatus = "in_progress";
+        var hasFail = latestByStation.Values.Any(l =>
+            string.Equals(l.Result, "fail", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(l.Result, "scrap", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(l.Result, "ng", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(l.Result, "reject", StringComparison.OrdinalIgnoreCase));
+        if (hasFail)
+        {
+            derivedStatus = "fail";
+        }
+        else if (requiredStations.Count > 0)
+        {
+            var allPassed = requiredStations.All(stationCode =>
+            {
+                if (!latestByStation.TryGetValue(stationCode, out var row)) return false;
+                if (!row.ExitedAt.HasValue) return false;
+                return string.Equals(row.Result, "pass", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(row.Result, "ok", StringComparison.OrdinalIgnoreCase);
+            });
+            if (allPassed)
+            {
+                derivedStatus = "pass";
+            }
+        }
 
         var stationDtos = stations.Select(s =>
         {
@@ -171,7 +231,7 @@ public sealed class TraceController : ControllerBase
             .ToListAsync(cancellationToken);
 
         var dto = new PanelTraceDto(
-            new PanelInfoDto(panel.PanelNo, panel.LotNo, panel.Status, panel.CreatedAt),
+            new PanelInfoDto(panel.PanelNo, panel.LotNo, derivedStatus, pwoId, workOrderNo, panel.CreatedAt),
             stationDtos,
             materials,
             sameLotPanels,
@@ -199,6 +259,40 @@ public sealed class TraceController : ControllerBase
     }
 
     /// <summary>
+    /// 依工單/批次號列出該批次所有板（給前端用批次查板號清單）。
+    /// </summary>
+    /// <remarks>
+    /// 為什麼需要這支：
+    /// - 追溯常見入口不是板號，而是「先拿到工單/批次號」；
+    /// - 先列出同批次所有板號，才能讓使用者點選查看完整時間軸與用料。
+    ///
+    /// 解決什麼問題：
+    /// - 前端只撈 recent 20 張板時，輸入批次字串不一定在清單內，使用者會誤以為查詢壞掉。
+    /// </remarks>
+    [HttpGet("panels/by-lot")]
+    public async Task<ActionResult<IReadOnlyList<RelatedPanelDto>>> PanelsByLot(
+        [FromQuery] string lotNo,
+        [FromQuery] int take = 100,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(lotNo))
+        {
+            return BadRequest(new { error = "lotNo is required" });
+        }
+
+        take = Math.Clamp(take, 1, 500);
+        var key = lotNo.Trim();
+        var items = await _db.Panels
+            .AsNoTracking()
+            .Where(p => p.LotNo == key)
+            .OrderBy(p => p.CreatedAt)
+            .Take(take)
+            .Select(p => new RelatedPanelDto(p.PanelNo, p.LotNo, p.Status, p.CreatedAt))
+            .ToListAsync(cancellationToken);
+        return Ok(items);
+    }
+
+    /// <summary>
     /// 依日期查詢「物料追蹤」真實資料（panel_material_usage + material_lots + panels）。
     /// </summary>
     /// <remarks>
@@ -212,12 +306,23 @@ public sealed class TraceController : ControllerBase
     /// </remarks>
     [HttpGet("material-tracking")]
     public async Task<ActionResult<IReadOnlyList<MaterialTrackingItemDto>>> MaterialTracking(
-        [FromQuery] DateOnly? date = null,
+        [FromQuery] string? date = null,
         [FromQuery] int take = 500,
         CancellationToken cancellationToken = default)
     {
         take = Math.Clamp(take, 1, 2000);
-        var target = date ?? DateOnly.FromDateTime(DateTime.UtcNow);
+        // 為什麼不直接用 DateOnly? model binding：
+        // - 某些部署/版本下 DateOnly 的 query binding 可能會失敗（最後變成 null），導致前端怎麼換日期都查到「今天(UTC)」；
+        // - 使用者要求畫面需能與 SQL 查詢對齊，因此這裡改成明確用 yyyy-MM-dd 解析，避免隱性 fallback。
+        var target = DateOnly.FromDateTime(DateTime.UtcNow);
+        if (!string.IsNullOrWhiteSpace(date))
+        {
+            var s = date.Trim();
+            if (!DateOnly.TryParseExact(s, "yyyy-MM-dd", out target))
+            {
+                return BadRequest(new { error = $"invalid date format: {s}, expected yyyy-MM-dd" });
+            }
+        }
         // 為什麼用 DateTimeOffset 邊界：
         // - panel_material_usage.used_at 欄位型別是 DateTimeOffset；
         //   直接用 offset-aware 區間比較，避免 provider 對 DateTime kind 轉換歧義。
@@ -228,11 +333,16 @@ public sealed class TraceController : ControllerBase
             from u in _db.PanelMaterialUsages.AsNoTracking()
             join m in _db.MaterialLots.AsNoTracking() on u.MaterialLotId equals m.Id
             join p in _db.Panels.AsNoTracking() on u.PanelId equals p.Id
+            join l in _db.Lots.AsNoTracking() on p.LotId equals l.Id
+            join wo in _db.ProductionWorkOrders.AsNoTracking() on l.ProductionWorkOrderId equals wo.Id into pj
+            from pwo in pj.DefaultIfEmpty()
             where u.UsedAt >= start && u.UsedAt < end
             orderby u.UsedAt descending
             select new MaterialTrackingItemDto(
                 u.PanelNo,
                 p.LotNo,
+                l.ProductionWorkOrderId,
+                pwo != null ? pwo.WorkOrderNo : null,
                 u.MaterialLotNo,
                 m.MaterialType,
                 m.MaterialName,

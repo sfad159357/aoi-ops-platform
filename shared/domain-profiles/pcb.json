@@ -44,6 +44,7 @@
   ],
   "menus": [
     { "id": "spc",   "label_zh": "品質監控" },
+    { "id": "pwo",   "label_zh": "工單查詢" },
     { "id": "ncr",   "label_zh": "不良單" },
     { "id": "alarm", "label_zh": "異常記錄" },
     { "id": "trace", "label_zh": "物料追溯查詢" }

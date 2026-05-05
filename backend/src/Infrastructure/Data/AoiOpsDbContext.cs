@@ -14,10 +14,6 @@ namespace AOIOpsPlatform.Infrastructure.Data;
 ///   讓 DB 端真的有外鍵約束、EF 可以走 navigation/Include。
 /// - 子表額外冗餘了可讀字串（lot_no、tool_code、panel_no…），
 ///   讓 controllers 直接 Select 即可拿到 JSON 期待的欄位，不需要再寫 join + 投影。
-///
-/// 為什麼仍保留 SqlServer / PostgreSQL 兩條路：
-/// - 開發機 / CI 大多預設 SqlServer，但既有 docker-compose 與少數測試仍可能跑 Postgres；
-///   provider 分流只在「default value SQL」與 panel_no filter 兩處有差異，集中在 OnModelCreating。
 /// </remarks>
 public sealed class AoiOpsDbContext : DbContext
 {
@@ -51,13 +47,9 @@ public sealed class AoiOpsDbContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        // 為什麼要做 provider 分流：
-        // - PostgreSQL 用 gen_random_uuid()，SQL Server 用 NEWID()；
-        // - panel_no 的 unique filter 在 SQL Server 用 [panel_no] IS NOT NULL，PG 則是 "panel_no" IS NOT NULL。
-        // - 集中在這裡決定，避免散落在各 entity config 內。
-        var provider = Database.ProviderName?.ToLowerInvariant() ?? string.Empty;
-        var isSqlServer = provider.Contains("sqlserver");
-        var defaultGuidSql = isSqlServer ? "NEWID()" : "gen_random_uuid()";
+        // 為什麼固定用 NEWID()：
+        // - 專案以 SQL Server 為唯一主資料庫，因此不再需要 provider 分流。
+        var defaultGuidSql = "NEWID()";
 
         ConfigureMasterTables(modelBuilder, defaultGuidSql);
         ConfigurePcbCoreTables(modelBuilder, defaultGuidSql);
@@ -176,6 +168,7 @@ public sealed class AoiOpsDbContext : DbContext
             b.HasKey(x => x.Id);
             b.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql(defaultGuidSql);
             b.Property(x => x.WorkOrderNo).HasColumnName("work_order_no").HasMaxLength(100).IsRequired();
+            b.Property(x => x.LineCode).HasColumnName("line_code").HasMaxLength(50);
             b.Property(x => x.ProductCode).HasColumnName("product_code").HasMaxLength(100);
             b.Property(x => x.PlannedQuantity).HasColumnName("planned_quantity");
             b.Property(x => x.Status).HasColumnName("status").HasMaxLength(50);

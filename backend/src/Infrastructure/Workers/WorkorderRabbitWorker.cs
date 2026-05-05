@@ -78,7 +78,18 @@ public sealed class NcrRabbitWorker : IRabbitMessageHandler
         var panelNo = evt.PanelNo;
         if (string.IsNullOrEmpty(panelNo) && !string.IsNullOrEmpty(evt.LotNo) && evt.WaferNo.HasValue)
         {
-            panelNo = $"{evt.LotNo}-{evt.WaferNo.Value}";
+            // 為什麼要正規化：
+            // - evt.LotNo 是批次號（LOT-*），板號固定要用 PN-*；同時避免出現 PN--... 的雙 dash。
+            var baseLot = evt.LotNo;
+            if (baseLot.StartsWith("WO-", StringComparison.OrdinalIgnoreCase) || baseLot.StartsWith("LOT-", StringComparison.OrdinalIgnoreCase))
+            {
+                baseLot = baseLot[3..];
+            }
+            panelNo = $"PN-{baseLot}-{evt.WaferNo.Value}";
+            while (panelNo.StartsWith("PN--", StringComparison.OrdinalIgnoreCase))
+            {
+                panelNo = "PN-" + panelNo[4..];
+            }
         }
         if (!string.IsNullOrEmpty(panelNo))
         {

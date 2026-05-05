@@ -78,29 +78,10 @@ try
 
     builder.Services.AddDbContext<AoiOpsDbContext>(options =>
     {
-        // 為什麼在這裡做 DB provider 分流（而不是散落在各處）：
-        // - DbContext 是所有 Controller / Worker 共用的基礎設施；集中在 Program.cs 做選擇，
-        //   才能符合 DIP（高層不依賴特定 DB），換 DB 時只要改設定與 compose env。
-        //
-        // 解決什麼問題：
-        // - 先前專案因為 initializer/healthcheck 有 Postgres DDL，導致「換 DB 需要大改」；
-        //   這裡先把「provider 選擇」抽象成設定，降低之後切換成本。
-        //
-        // 設定來源：
-        // - docker-compose 可以提供 Database__Provider=postgres|sqlserver
-        // - 若未提供，預設沿用既有 PostgreSQL 行為，避免影響現有環境。
-        var provider = builder.Configuration["Database:Provider"]?.Trim().ToLowerInvariant() ?? "postgres";
-
-        if (provider is "sqlserver" or "mssql")
-        {
-            // 為什麼用 UseSqlServer：EF Core 官方 provider，對 Azure SQL Edge / SQL Server 相容。
-            options.UseSqlServer(connectionString);
-        }
-        else
-        {
-            // 既有預設：PostgreSQL（Npgsql provider）
-            options.UseNpgsql(connectionString);
-        }
+        // 為什麼只保留 SQL Server：
+        // - 專案已明確以 SQL Server（Azure SQL Edge / SQL Server）作為唯一主資料庫；
+        //   Postgres 只會讓設定與除錯路徑分叉，增加維運成本與誤判風險。
+        options.UseSqlServer(connectionString);
     });
 
     // 為什麼用 Configure<T> 模式：

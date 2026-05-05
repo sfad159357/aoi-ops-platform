@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 namespace AOIOpsPlatform.Api.Controllers;
 
 /// <summary>
-/// Health API：用最小成本驗證「後端 ↔ PostgreSQL」是否真的能通。
+/// Health API：用最小成本驗證「後端 ↔ SQL Server」是否真的能通。
 /// 為什麼要獨立一個 controller：
 /// - 連線問題最常發生在 compose 網路、連線字串、帳密、DB 尚未初始化等；用一個固定 endpoint 能快速定位。
 /// 解決什麼問題：
@@ -32,11 +32,11 @@ public sealed class HealthController : ControllerBase
     {
         var canConnect = await _db.Database.CanConnectAsync(cancellationToken);
 
-        // 為什麼不再查 information_schema：
-        // - 先前這支 healthcheck 寫死 Postgres 的 table_schema='public'，
-        //   一旦改用 SQL Server（預設 dbo）就會「不報錯但永遠回 false」，造成誤判。
+        // 為什麼不查 information_schema：
+        // - metadata schema 在不同 DB 上欄位/命名習慣不同，容易造成「不報錯但永遠回 false」的誤判；
+        //   改用 ORM 本身的 query 當作 schema readiness 更穩定。
         //
-        // 這裡改用 ORM 本身的 query 當作 schema readiness：
+        // 這裡用 ORM query 當作 schema readiness：
         // - 若 schema 未建立，AnyAsync 會拋例外；我們捕捉後回 false，並保留 canConnect 供判斷是連線問題還是 schema 問題。
         // - 這樣能讓 healthcheck 在不同 provider 上行為一致（不綁死特定 DB 的 metadata schema）。
         var toolsTableExists = false;

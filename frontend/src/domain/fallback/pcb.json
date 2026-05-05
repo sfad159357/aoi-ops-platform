@@ -30,9 +30,10 @@
   ],
   "menus": [
     { "id": "spc",   "labelZh": "品質監控" },
+    { "id": "pwo",   "labelZh": "工單查詢" },
     { "id": "ncr",   "labelZh": "不良單" },
     { "id": "alarm", "labelZh": "異常記錄" },
-    { "id": "trace", "labelZh": "物料追溯查詢" }
+    { "id": "trace", "labelZh": "板號/批次查詢" }
   ],
   "kpi": {
     "yield_rate": {

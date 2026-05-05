@@ -1,7 +1,7 @@
 namespace AOIOpsPlatform.Domain.Entities;
 
 /// <summary>
-/// ProductionWorkOrder（生產工單／製令／MO/WO）。
+/// ProductionWorkOrder（生產工單／製令／WO）。
 /// </summary>
 /// <remarks>
 /// 為什麼要新增這個主檔：
@@ -14,8 +14,11 @@ public sealed class ProductionWorkOrder
 {
     public Guid Id { get; set; }
 
-    /// <summary>生產工單號（例如：MO-20260505-0001）。</summary>
+    /// <summary>生產工單號（例如：WO-20260505-0001）。</summary>
     public string WorkOrderNo { get; set; } = null!;
+
+    /// <summary>產線代碼（例如：SMT-A）。</summary>
+    public string? LineCode { get; set; }
 
     /// <summary>成品料號/產品料號。</summary>
     public string? ProductCode { get; set; }

@@ -39,6 +39,8 @@ public sealed class AlarmsController : ControllerBase
         string? LineCode,
         string? StationCode,
         string? LotNo,
+        Guid? ProductionWorkOrderId,
+        string? WorkOrderNo,
         string? PanelNo,
         string? OperatorCode,
         string? OperatorName);
@@ -51,11 +53,17 @@ public sealed class AlarmsController : ControllerBase
         // 為什麼上限固定 500：避免 client 傳超大數字打爆 DB / 前端；後續分頁可在 W11+ 補。
         take = Math.Clamp(take, 1, 500);
 
-        var items = await _db.Alarms
-            .AsNoTracking()
-            .OrderByDescending(a => a.TriggeredAt)
-            .Take(take)
-            .Select(a => new AlarmListItemDto(
+        // 為什麼要把 lot_no 關聯回 production_work_order：
+        // - 告警列表常用 lot_no 當入口，但現場管理要看的是「這是哪張製令/工單」；
+        // - 單一真相在 lots.production_work_order_id → production_work_order.work_order_no。
+        var items = await (
+            from a in _db.Alarms.AsNoTracking()
+            join l in _db.Lots.AsNoTracking() on a.LotNo equals l.LotNo into lj
+            from lot in lj.DefaultIfEmpty()
+            join pwo in _db.ProductionWorkOrders.AsNoTracking() on lot.ProductionWorkOrderId equals pwo.Id into pj
+            from wo in pj.DefaultIfEmpty()
+            orderby a.TriggeredAt descending
+            select new AlarmListItemDto(
                 a.Id,
                 a.AlarmCode,
                 a.AlarmLevel,
@@ -68,9 +76,12 @@ public sealed class AlarmsController : ControllerBase
                 a.LineCode,
                 a.StationCode,
                 a.LotNo,
+                lot != null ? lot.ProductionWorkOrderId : null,
+                wo != null ? wo.WorkOrderNo : null,
                 a.PanelNo,
                 a.OperatorCode,
                 a.OperatorName))
+            .Take(take)
             .ToListAsync(cancellationToken);
 
         return Ok(items);

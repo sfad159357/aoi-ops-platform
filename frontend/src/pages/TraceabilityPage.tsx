@@ -1,4 +1,4 @@
-// TraceabilityPage：物料追溯頁。
+// TraceabilityPage：板號/批次查詢（含物料追溯）頁。
 //
 // 為什麼這頁要做：
 // - 對齊 HTML Tab 2 的「板資訊 + 站別時間軸 + 物料批號 + 同批次列表」；
@@ -17,6 +17,7 @@ import { useProfile } from '../domain/useProfile'
 import {
   fetchMaterialTracking,
   fetchPanelTrace,
+  fetchPanelsByLot,
   fetchRecentPanels,
   type MaterialTrackingItem,
   type PanelTrace,
@@ -29,6 +30,8 @@ export default function TraceabilityPage() {
 
   const [panelNoInput, setPanelNoInput] = useState<string>('')
   const [recent, setRecent] = useState<RelatedPanel[]>([])
+  const [lotPanels, setLotPanels] = useState<RelatedPanel[]>([])
+  const [lotPanelsError, setLotPanelsError] = useState<string | null>(null)
   const [dateFilter, setDateFilter] = useState<string>(() => todayYmd())
   const [materialTake, setMaterialTake] = useState<number>(20)
   const [recentQuery, setRecentQuery] = useState<string>('')
@@ -67,7 +70,7 @@ export default function TraceabilityPage() {
   // - 先過濾日期可降低候選數量，避免最近板很多時下拉選單難以定位。
   //
   // 解決什麼問題：
-  // - 讓「物料追溯查詢」具備與「工單管理」一致的日期篩選體驗。
+  // - 讓「板號/批次查詢」具備與「工單查詢」一致的日期篩選體驗。
   // - 使用者可直接切換某天資料，不會被跨日歷史板號干擾。
   // 為什麼要做模糊搜尋：
   // - 追溯時常見情境是「拿到一串板號/批號碎片」就想快速定位；
@@ -84,6 +87,39 @@ export default function TraceabilityPage() {
       return a.includes(q) || b.includes(q)
     })
   }, [dateFilter, recent, recentQuery])
+
+  // 為什麼輸入批次號要去後端列出板號：
+  // - recent panels 只撈最近 N 張，批次若不在其中，前端純過濾永遠找不到；
+  // - 追溯常見入口是 lot/工單，必須能用 lotNo 拉出同批次所有板號讓使用者點選。
+  useEffect(() => {
+    const q = recentQuery.trim()
+    if (!q) {
+      setLotPanels([])
+      setLotPanelsError(null)
+      return
+    }
+    // 取捨：以「看起來像批次號」才打 API，避免每輸入一個字就打爆後端
+    const looksLikeLot = q.toUpperCase().includes('LOT') || q.toUpperCase().startsWith('WO-')
+    if (!looksLikeLot) {
+      setLotPanels([])
+      setLotPanelsError(null)
+      return
+    }
+
+    const ctrl = new AbortController()
+    setLotPanelsError(null)
+    void (async () => {
+      try {
+        const list = await fetchPanelsByLot(q, 200, ctrl.signal)
+        setLotPanels(list)
+      } catch (e) {
+        if (e instanceof DOMException && e.name === 'AbortError') return
+        setLotPanels([])
+        setLotPanelsError(e instanceof Error ? e.message : String(e))
+      }
+    })()
+    return () => ctrl.abort()
+  }, [recentQuery])
 
   // 為什麼物料預設最新在上：
   // - 真實追溯通常先看「最近一筆用料/到貨」來判斷是否是同一批異常擴散；
@@ -150,6 +186,25 @@ export default function TraceabilityPage() {
     return () => ctrl.abort()
   }, [dateFilter, materialTake])
 
+  // 為什麼物料追蹤列表要吃「板號 / 模糊搜尋」即時過濾：
+  // - 使用者在追溯時常會先輸入某張板或一段碎片字串（板號/批次/物料批號），希望同頁的所有表格同步縮小範圍；
+  // - 物料追蹤 API 以日期為主查詢（真實交易資料），前端在「不改變 SQL 結果」前提下做純過濾，
+  //   能保留單一事實來源，同時改善操作體驗。
+  const filteredMaterialRows = useMemo(() => {
+    const q = recentQuery.trim().toLowerCase()
+    const panelQ = panelNoInput.trim().toLowerCase()
+    return materialRows.filter((r) => {
+      const panelNo = r.panelNo.toLowerCase()
+      const lotNo = (r.lotNo ?? '').toLowerCase()
+      const materialLotNo = (r.materialLotNo ?? '').toLowerCase()
+      const materialType = (r.materialType ?? '').toLowerCase()
+
+      if (panelQ && !panelNo.includes(panelQ)) return false
+      if (!q) return true
+      return panelNo.includes(q) || lotNo.includes(q) || materialLotNo.includes(q) || materialType.includes(q)
+    })
+  }, [materialRows, panelNoInput, recentQuery])
+
   // 為什麼 timeline 改成完全吃後端 trace.stations：
   // - 使用者要求不要前端硬寫站數（例如固定 6 站），改由後端回傳決定顯示內容；
   // - TraceController 已回傳 stationLabel/seq，前端只做排序渲染，避免雙邊規格漂移。
@@ -169,7 +224,7 @@ export default function TraceabilityPage() {
       <div style={headerRowStyle}>
         <div>
           <h1 style={{ margin: 0, fontSize: 18, fontWeight: 600 }}>
-            {profile.menus.find((m) => m.id === 'trace')?.labelZh ?? '物料追溯查詢'}
+            {profile.menus.find((m) => m.id === 'trace')?.labelZh ?? '板號/批次查詢'}
           </h1>
           <div style={{ color: '#6b7280', fontSize: 12, marginTop: 4 }}>
             掃 QR Code 或選最近{profile.entities.panel.labelZh}：站別時間軸 + 物料批號 + 同批次{profile.entities.panel.labelZh}
@@ -202,7 +257,7 @@ export default function TraceabilityPage() {
           <option value="1000">1000 筆</option>
         </select>
         <label style={{ fontSize: 12, color: '#9ca3af' }}>
-          {profile.entities.panel.labelZh} No
+          板號
         </label>
         <input
           value={panelNoInput}
@@ -230,6 +285,21 @@ export default function TraceabilityPage() {
             ))}
           </select>
         )}
+        {lotPanelsError && <div style={{ ...errorStyle, marginBottom: 0 }}>批次查板失敗：{lotPanelsError}</div>}
+        {lotPanels.length > 0 && (
+          <select
+            value={panelNoInput}
+            onChange={(e) => setPanelNoInput(e.target.value)}
+            style={selectStyle}
+          >
+            <option value="">— 批次 {recentQuery.trim()} 共 {lotPanels.length} 張 —</option>
+            {lotPanels.map((r) => (
+              <option key={r.panelNo} value={r.panelNo}>
+                {r.panelNo}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       {loading && <div style={{ color: '#9ca3af', fontSize: 12 }}>載入中…</div>}
@@ -242,10 +312,10 @@ export default function TraceabilityPage() {
         {materialError && <div style={errorStyle}>物料追蹤查詢失敗：{materialError}</div>}
         {!materialLoading && !materialError && (
           <div style={{ fontSize: 12, color: '#9ca3af', marginBottom: 8 }}>
-            當日真實筆數：{materialRows.length}
+            當日真實筆數：{materialRows.length}（目前顯示：{filteredMaterialRows.length}）
           </div>
         )}
-        {!materialLoading && !materialError && materialRows.length === 0 ? (
+        {!materialLoading && !materialError && filteredMaterialRows.length === 0 ? (
           <div style={emptyStyle}>此日期沒有物料使用資料。</div>
         ) : (
           !materialLoading &&
@@ -264,7 +334,7 @@ export default function TraceabilityPage() {
                 </tr>
               </thead>
               <tbody>
-                {materialRows.map((r, idx) => (
+                {filteredMaterialRows.map((r, idx) => (
                   <tr key={`${r.panelNo}-${r.materialLotNo}-${r.usedAt}-${idx}`} style={{ borderBottom: '1px solid #21262d' }}>
                     <td style={tdMonoStyle}>{formatTime(r.usedAt)}</td>
                     <td style={tdMonoStyle}>{r.panelNo}</td>
@@ -288,8 +358,9 @@ export default function TraceabilityPage() {
           <section style={sectionStyle}>
             <h2 style={sectionTitleStyle}>{profile.entities.panel.labelZh} 資訊</h2>
             <div style={infoGridStyle}>
-              <InfoCell label={`${profile.entities.panel.labelZh} No`} value={trace.panel.panelNo} mono />
+              <InfoCell label="板號" value={trace.panel.panelNo} mono />
               <InfoCell label={profile.entities.lot.labelZh} value={trace.panel.lotNo} mono />
+              <InfoCell label="工單號" value={trace.panel.workOrderNo ?? '-'} mono />
               <InfoCell label="狀態" value={trace.panel.status ?? '-'} />
               <InfoCell label="建立時間" value={formatTime(trace.panel.createdAt)} mono />
             </div>
@@ -309,7 +380,9 @@ export default function TraceabilityPage() {
           <section style={sectionStyle}>
             <h2 style={sectionTitleStyle}>使用物料批號</h2>
             {sortedMaterials.length === 0 ? (
-              <div style={emptyStyle}>沒有任何物料記錄。</div>
+              <div style={emptyStyle}>
+                沒有任何物料記錄（SQL：`panel_material_usage` 查無此板交易）。
+              </div>
             ) : (
               <table style={tableStyle}>
                 <thead>
@@ -346,6 +419,11 @@ export default function TraceabilityPage() {
             </section>
             <section style={sectionStyle}>
               <h2 style={sectionTitleStyle}>同物料 {profile.entities.panel.labelZh}（{trace.sameMaterialPanels.length} 張）</h2>
+              {trace.materials.length === 0 && (
+                <div style={{ fontSize: 12, color: '#9ca3af', marginBottom: 8 }}>
+                  此板沒有任何用料批號，因此無法反查「同物料板」。
+                </div>
+              )}
               <RelatedTable rows={trace.sameMaterialPanels} onSelect={setPanelNoInput} />
             </section>
           </div>
@@ -378,7 +456,7 @@ function StationCard({
   log: StationLog | null
 }) {
   // 為什麼需要把 result 做正規化再上色：
-  // - 物料追溯查詢要求「照 SQL 真實資料呈現」，所以 badge 文字要顯示 DB 原始 result；
+  // - 板號/批次查詢要求「照 SQL 真實資料呈現」，所以 badge 文字要顯示 DB 原始 result；
   // - 但現場/歷史資料可能出現同義值（例如 OK/NG/SCRAP），若直接用字串比對會被誤判成未知狀態（藍色）。
   // - 取捨：顯示不改動原始值（可對照 SQL），僅把「上色邏輯」統一映射到 pass/fail/warn/skip。
   const rawResult = log?.result
@@ -426,7 +504,7 @@ function StationCard({
             出站：{log.exitedAt ? formatTime(log.exitedAt) : '進行中'}
           </div>
           {/* 為什麼把作業員 / 機台補在卡片下半：
-              - 物料追溯查詢頁需要看「誰在哪台機跑這站」才能對接責任歸屬，
+              - 板號/批次查詢頁需要看「誰在哪台機跑這站」才能對接責任歸屬，
                 而 panel_station_log 已冗餘 operatorName / toolCode。 */}
           {(log.operator || log.operatorName) && (
             <div style={{ fontSize: 11, color: '#9ca3af', fontFamily: 'JetBrains Mono, monospace' }}>
@@ -491,6 +569,7 @@ function normalizeStationResult(raw: string | null | undefined): string {
   if (v === 'fail' || v === 'ng' || v === 'reject' || v === 'scrap') return 'fail'
   if (v === 'warn' || v === 'warning') return 'warn'
   if (v === 'skip' || v === 'bypass') return 'skip'
+  if (v === 'in_process' || v === 'in_progress' || v === 'processing') return 'in_process'
 
   return v
 }
@@ -517,6 +596,8 @@ function resultPalette(result: string, hasLog: boolean): { border: string; badge
       return { border: '#f85149', badgeBg: '#f85149', badgeFg: '#fff' }
     case 'skip':
       return { border: '#6b7280', badgeBg: '#374151', badgeFg: '#e5e7eb' }
+    case 'in_process':
+      return { border: '#6b7280', badgeBg: '#111827', badgeFg: '#9ca3af' }
     default:
       return { border: '#58a6ff', badgeBg: '#58a6ff', badgeFg: '#0d1117' }
   }
@@ -550,6 +631,10 @@ const pageStyle: React.CSSProperties = {
   minHeight: 'calc(100vh - 48px)',
   padding: 24,
   fontFamily: 'Noto Sans TC, system-ui, sans-serif',
+  // 為什麼整體字體放大 2px：
+  // - 追溯頁是現場工程師/主管在產線快速掃一眼的場景，小字容易看不清楚；
+  // - 放大基礎字級可讓表格與卡片在不改 layout 的前提下更易讀。
+  fontSize: 18,
 }
 
 const headerRowStyle: React.CSSProperties = {
